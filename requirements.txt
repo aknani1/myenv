@@ -1,0 +1,6 @@
+app==0.0.1
+Flask==3.1.0
+Flask_Cors==5.0.0
+Flask_SocketIO==5.5.1
+numpy==2.2.2
+pyrealsense2==2.55.1.6486
