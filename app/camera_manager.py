@@ -185,18 +185,17 @@ class CameraManager:
         Suitable for passing to a WebSocket or Socket.IO 'emit' loop.
         """
         if not self.is_streaming:
-            self.configure_pipeline()
+                self.configure_pipeline()
 
         try:
             while self.is_streaming:
                 frameset = self.pipeline.wait_for_frames()
-
                 color_frame = frameset.get_color_frame()
                 depth_frame = frameset.get_depth_frame()
                 if not color_frame or not depth_frame:
                     continue
 
-                # Compute displayed FPS for color
+                # Calculate displayed FPS
                 now_c = time.time()
                 if self.last_color_time != 0:
                     dt_c = now_c - self.last_color_time
@@ -204,7 +203,6 @@ class CameraManager:
                         self.displayed_color_fps = 1.0 / dt_c
                 self.last_color_time = now_c
 
-                # Compute displayed FPS for depth
                 now_d = time.time()
                 if self.last_depth_time != 0:
                     dt_d = now_d - self.last_depth_time
@@ -212,35 +210,40 @@ class CameraManager:
                         self.displayed_depth_fps = 1.0 / dt_d
                 self.last_depth_time = now_d
 
-                # Convert frames to numpy
+                # Convert frames to base64
                 color_image = np.asanyarray(color_frame.get_data())
                 depth_colorized_frame = rs.colorizer().colorize(depth_frame)
                 depth_image = np.asanyarray(depth_colorized_frame.get_data())
 
-                # If metadata toggled on, gather info and overlay
-                if self.metadata_toggles["rgb"]:
-                    lines_rgb = gather_metadata_and_profile_info(color_frame)
-                    lines_rgb.append(f"Displayed FPS: {self.displayed_color_fps:.1f}")
-                    overlay_in_top_left(color_image, lines_rgb, text_color=(0, 255, 0))
-
-                if self.metadata_toggles["depth"]:
-                    lines_depth = gather_metadata_and_profile_info(depth_frame)
-                    lines_depth.append(f"Displayed FPS: {self.displayed_depth_fps:.1f}")
-                    overlay_in_top_left(depth_image, lines_depth, text_color=(255, 0, 0))
-
-                # Encode images as base64
                 _, color_buf = cv2.imencode(".jpg", color_image)
                 _, depth_buf = cv2.imencode(".jpg", depth_image)
                 color_encoded = base64.b64encode(color_buf).decode("utf-8")
                 depth_encoded = base64.b64encode(depth_buf).decode("utf-8")
 
-                yield {"color": color_encoded, "depth": depth_encoded}
+                # Gather metadata as lists of text lines (if toggled)
+                lines_rgb = []
+                lines_depth = []
+                if self.metadata_toggles["rgb"]:
+                    lines_rgb = gather_metadata_and_profile_info(color_frame)
+                    lines_rgb.append(f"Displayed FPS: {self.displayed_color_fps:.1f}")
+
+                if self.metadata_toggles["depth"]:
+                    lines_depth = gather_metadata_and_profile_info(depth_frame)
+                    lines_depth.append(f"Displayed FPS: {self.displayed_depth_fps:.1f}")
+
+                yield {
+                    "color": color_encoded,
+                    "depth": depth_encoded,
+                    "metadata": {
+                        "rgb": lines_rgb,
+                        "depth": lines_depth
+                    }
+                }
 
         except Exception as e:
             print("[CameraManager] Error in generate_frames():", e)
         finally:
             self.stop_stream()
-
 
 
     def get_device_info(self):
