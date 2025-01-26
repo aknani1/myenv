@@ -12,16 +12,30 @@ src/
         app.component.ts
         app.module.ts
         components/
+            cam-streams/
+                cam-streams.component.html
+                cam-streams.component.scss
+                cam-streams.component.spec.ts
+                cam-streams.component.ts
             cam-viewer/
                 cam-viewer.component.html
                 cam-viewer.component.scss
                 cam-viewer.component.spec.ts
                 cam-viewer.component.ts
+            sidebar-controls/
+                sidebar-controls.component.html
+                sidebar-controls.component.scss
+                sidebar-controls.component.spec.ts
+                sidebar-controls.component.ts
         services/
             http-config.service.spec.ts
             http-config.service.ts
             web-socket.service.spec.ts
             web-socket.service.ts
+        styles/
+            _variables.scss
+    assets/
+        realsense-logo.png
 
 
 File Contents
@@ -71,20 +85,29 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\styles.scss
 File type: .scss
-@import '@angular/material/prebuilt-themes/deeppurple-amber.css';
+@import '@angular/material/prebuilt-themes/indigo-pink.css';
+@import './app/styles/variables';
 
-
-
-html, body {
+html, body, app-root {
   height: 100%;
   margin: 0;
   padding: 0;
-  background-color: #000000; /* Black background */
-  color: #ffffff; /* Light text color */
+  background-color: $darkest-background;
+  color: $primary-text;
+  font-family: 'Roboto', sans-serif;
 }
 
-.mat-sidenav-container {
-  background-color: #000000; /* Black background for the sidenav container */
+/* Force the mat-sidenav-container to also fill available height */
+.mat-sidenav-container,
+.mat-sidenav-content {
+  height: 100%;
+  background-color: $dark-background;
+}
+
+
+/* For a smoother control-panel animation */
+.module-toggle .control-panel {
+  transition: all 0.3s ease-in-out;
 }
 
 
@@ -114,8 +137,17 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\app.component.html
 File type: .html
-<app-cam-viewer></app-cam-viewer>
-
+<header class="app-header">
+    <img src="../assets/realsense-logo.png" alt="Intel RealSense Logo" class="logo" />
+    <div class ="title-container" >
+        <h1>Intel® RealSense WebViewer</h1>
+    </div>
+  </header>
+  
+  <main>
+    <app-cam-viewer></app-cam-viewer>
+  </main>
+  
 
 --------------------------------------------------
 File End
@@ -124,7 +156,33 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\app.component.scss
 File type: .scss
-
+.app-header {
+    display: flex;
+    align-items: center;
+    background-color: #000000;
+    padding: 0.5rem 1rem;
+  
+    .logo {
+      height: 40px;
+      margin-right: 1rem;
+    }
+  
+    h1 {
+      color: #009fde;
+      font-size: 1.5rem;
+      margin: 0;
+      
+    }
+  }
+  .title-container {
+    padding: 10px; /* Adds some spacing around the title */
+    z-index: 1000; /* Ensures it stays above other elements */
+  }
+  /* main area occupies the rest of the screen */
+  main {
+    height: calc(100vh - 60px);
+  }
+  
 
 --------------------------------------------------
 File End
@@ -197,28 +255,35 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\app.module.ts
 File type: .ts
+// app.module.ts
 import { NgModule } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
-import { FormsModule } from '@angular/forms'; 
+import { FormsModule } from '@angular/forms';
 import { AppRoutingModule } from './app-routing.module';
 import { AppComponent } from './app.component';
+// Angular Material modules...
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
-import { CamViewerComponent } from './components/cam-viewer/cam-viewer.component';
 import { MatIconModule } from '@angular/material/icon';
-import { provideHttpClient } from '@angular/common/http';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { MatTableModule } from '@angular/material/table';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
+import { provideHttpClient } from '@angular/common/http';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 
+// Import your components
+import { CamViewerComponent } from './components/cam-viewer/cam-viewer.component';
+import { SidebarControlsComponent } from './components/sidebar-controls/sidebar-controls.component';
+import { CamStreamsComponent } from './components/cam-streams/cam-streams.component';
+
 @NgModule({
+  // Put all non-standalone components here
   declarations: [
     AppComponent,
-    CamViewerComponent
+
   ],
   imports: [
     BrowserModule,
@@ -233,11 +298,181 @@ import { provideAnimationsAsync } from '@angular/platform-browser/animations/asy
     MatInputModule,
     MatSelectModule,
     MatButtonModule,
+    CamViewerComponent
+    ],
+  providers: [
+    provideHttpClient()
   ],
-  providers: [provideHttpClient()],
   bootstrap: [AppComponent]
 })
 export class AppModule { }
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-streams\cam-streams.component.html
+File type: .html
+<div
+  class="streaming-container"
+  [class.single-stream]="(showDepth && !showRGB) || (!showDepth && showRGB)"
+  [class.double-stream]="showDepth && showRGB"
+>
+  <!-- Show nothing-to-stream placeholder if both toggles off -->
+  <div *ngIf="!showDepth && !showRGB" class="placeholder-text">
+    Nothing to stream!
+  </div>
+
+  <!-- Depth Stream -->
+  <div *ngIf="showDepth" class="stream-box">
+    <h3 class="stream-title">Depth Stream</h3>
+    <ng-container *ngIf="depthImageUrl; else noDepthText">
+      <img [src]="depthImageUrl" alt="Depth Stream" />
+    </ng-container>
+    <ng-template #noDepthText>
+      <p>No Depth Image Feed</p>
+    </ng-template>
+  </div>
+
+  <!-- RGB Stream -->
+  <div *ngIf="showRGB" class="stream-box">
+    <h3 class="stream-title">RGB Stream</h3>
+    <ng-container *ngIf="colorImageUrl; else noRgbText">
+      <img [src]="colorImageUrl" alt="RGB Stream" />
+    </ng-container>
+    <ng-template #noRgbText>
+      <p>No RGB Image Feed</p>
+    </ng-template>
+  </div>
+</div>
+
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-streams\cam-streams.component.scss
+File type: .scss
+@import '../../styles/_variables.scss';
+
+.streaming-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-color: $dark-background;
+  color: $primary-text;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  /* If only one stream toggled, center it in single-stream layout */
+  &.single-stream {
+    flex-direction: column;
+  }
+
+  /* If two toggles are on, show them side by side */
+  &.double-stream {
+    flex-direction: row;
+    justify-content: space-evenly;
+    align-items: center;
+  }
+
+  .placeholder-text {
+    font-size: 2rem;
+    font-weight: bold;
+    color: $secondary-text;
+    text-align: center;
+  }
+
+  .stream-box {
+    border: 1px solid #444;
+    background-color: #2f2f2f;
+    margin: 1rem;
+    padding: 1rem;
+    border-radius: 6px;
+
+    .stream-title {
+      color: $realsense-blue;
+      text-align: center;
+      margin-bottom: 0.5rem;
+    }
+
+    img {
+      max-width: 90%;
+      border: 1px solid #555;
+      margin-bottom: 1rem;
+    }
+
+    p {
+      text-align: center;
+      color: $secondary-text;
+    }
+  }
+}
+
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-streams\cam-streams.component.spec.ts
+File type: .ts
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { CamStreamsComponent } from './cam-streams.component';
+
+describe('CamStreamsComponent', () => {
+  let component: CamStreamsComponent;
+  let fixture: ComponentFixture<CamStreamsComponent>;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      declarations: [CamStreamsComponent]
+    })
+    .compileComponents();
+
+    fixture = TestBed.createComponent(CamStreamsComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
+
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+});
+
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-streams\cam-streams.component.ts
+File type: .ts
+import { CommonModule } from '@angular/common';
+import { Component, Input } from '@angular/core';
+
+@Component({
+  selector: 'app-cam-streams',
+  templateUrl: './cam-streams.component.html',
+  styleUrls: ['./cam-streams.component.scss'],
+  standalone: true,
+  imports: [
+    CommonModule,
+    // plus anything else you need
+  ]
+})
+export class CamStreamsComponent {
+  @Input() showDepth = false;
+  @Input() showRGB = false;
+
+  @Input() depthImageUrl: string | null = null;
+  @Input() colorImageUrl: string | null = null;
+}
 
 
 --------------------------------------------------
@@ -247,114 +482,39 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-viewer\cam-viewer.component.html
 File type: .html
-<div class="viewer-container">
+<mat-sidenav-container class="viewer-container">
   <!-- Sidebar -->
-  <mat-sidenav-container class="sidenav-container">
-    <mat-sidenav mode="side" opened>
-      <div class="sidebar">
-        <h3>Modules</h3>
-        
-        <!-- Depth Module -->
-        <div class="module-toggle">
-          <mat-slide-toggle 
-            [(ngModel)]="depthModuleEnabled" 
-            (change)="toggleDepthModule()">
-            Depth Module
-          </mat-slide-toggle>
-          <!-- Control Panel for Depth Module -->
-          <div *ngIf="depthModuleVisible" class="control-panel">
-            <h4>Depth Module Controls</h4>
-            <p>Resolution:</p>
-            <select [(ngModel)]="selectedDepthResolution" (change)="updateDepthResolution()">
-              <option value="640x480">640x360</option>
-              <option value="1280x720">1280x720</option>
-            </select>
-            <p>Frame Rate:</p>
-            <select [(ngModel)]="selectedDepthFrameRate" (change)="updateDepthFrameRate()">
-              <option value="15">15 FPS</option>
-              <option value="30">30 FPS</option>
-            </select>
-            <!-- Exposure Slider -->
-            <p>Exposure:</p>
-            <input 
-              type="range" 
-              min="0" 
-              max="800" 
-              step="20" 
-              [(ngModel)]="depthExposureValue" 
-              (change)="updateDepthExposure()" />
-            {{ depthExposureValue }}
-            <mat-slide-toggle
-            [(ngModel)]="depthMetadataEnabled"
-            (change)="toggleDepthMetadata()"
-          >
-            Show Metadata
-          </mat-slide-toggle>
+  <mat-sidenav mode="side" opened>
+    <app-sidebar-controls
+      (depthToggleChange)="onDepthToggle($event)"
+      (rgbToggleChange)="onRgbToggle($event)"
+      (depthResolutionChange)="updateDepthConfig($event)"
+      (rgbResolutionChange)="updateRGBConfig($event)"
+      (depthExposureChange)="updateDepthExposure($event)"
+      (rgbExposureChange)="updateRGBExposure($event)"
+      (depthMetadataToggle)="onDepthMetadataToggle($event)"
+      (rgbMetadataToggle)="onRgbMetadataToggle($event)"
+    >
+    </app-sidebar-controls>
+  </mat-sidenav>
+
+  <!-- Streaming Container -->
+  <mat-sidenav-content>
+    <app-cam-streams
+      [showDepth]="showDepth"
+      [showRGB]="showRGB"
+      [depthImageUrl]="depthImageUrl"
+      [colorImageUrl]="colorImageUrl"
+    ></app-cam-streams>
+        <!-- Reconfiguring Overlay -->
+        <div class="overlay" *ngIf="isReconfiguring">
+          <div class="overlay-content">
+            <mat-icon class="spinner">autorenew</mat-icon>
+            <p>Reconfiguring. Please wait...</p>
           </div>
         </div>
-
-        <!-- RGB Camera -->
-        <div class="module-toggle">
-          <mat-slide-toggle 
-            [(ngModel)]="rgbCameraEnabled" 
-            (change)="toggleRGBCamera()">
-            RGB Camera
-          </mat-slide-toggle>
-          <!-- Control Panel for RGB Camera -->
-          <div *ngIf="rgbCameraVisible" class="control-panel">
-            <h4>RGB Camera Controls</h4>
-            <p>Resolution:</p>
-            <select [(ngModel)]="selectedRGBResolution" (change)="updateRGBResolution()">
-              <option value="640x480">640x360</option>
-              <option value="1280x720">1280x720</option>
-            </select>
-            <p>Frame Rate:</p>
-            <select [(ngModel)]="selectedRGBFrameRate" (change)="updateRGBFrameRate()">
-              <option value="15">15 FPS</option>
-              <option value="30">30 FPS</option>
-            </select>
-             <!-- Exposure Slider -->
-             <p>Exposure:</p>
-             <input 
-               type="range" 
-               min="0" 
-               max="800" 
-               step="20" 
-               [(ngModel)]="rgbExposureValue" 
-               (change)="updateRGBExposure()" />
-             {{ rgbExposureValue }}
-             <mat-slide-toggle
-             [(ngModel)]="rgbMetadataEnabled"
-             (change)="toggleRGBMetadata()"
-           >
-             Show Metadata
-           </mat-slide-toggle>
-          </div>
-        </div>
-      </div>
-    </mat-sidenav>
-
-    <!-- Streaming Container -->
-    <mat-sidenav-content class="streaming-container">
-      <!-- Placeholder or Streams -->
-      <div *ngIf="!showDepth && !showRGB" class="placeholder-text">
-        Nothing is streaming! Toggle a module to start.
-      </div>
-
-      <!-- Depth Stream -->
-      <div *ngIf="showDepth && depthImageUrl" class="stream-box">
-        <h3 class="stream-title">Depth Stream</h3>
-        <img [src]="depthImageUrl" alt="Depth Stream" />
-      </div>
-
-      <!-- RGB Stream -->
-      <div *ngIf="showRGB && colorImageUrl" class="stream-box">
-        <h3 class="stream-title">RGB Stream</h3>
-        <img [src]="colorImageUrl" alt="RGB Stream" />
-      </div>
-    </mat-sidenav-content>
-  </mat-sidenav-container>
-</div>
+  </mat-sidenav-content>
+</mat-sidenav-container>
 
 
 --------------------------------------------------
@@ -364,49 +524,28 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-viewer\cam-viewer.component.scss
 File type: .scss
-.viewer-container {
-  display: flex;
-  height: 100vh;
-  background-color: transparent; /* Let the global black background show */
-}
+@import '../../styles/_variables.scss';
 
-.sidenav-container {
+.viewer-container {
+  width: 100%;
   height: 100%;
 }
 
-.sidebar {
-  width: 250px;
-  padding: 10px;
-  background-color: #2c2c2c; /* Sidebar-specific dark gray */
-}
-.sidebar h3 {
-  color: #90caf9; /* Light blue for headers */
+/* mat-sidenav-container and mat-sidenav-content
+   are already set to 100% in global CSS, so no
+   partial coverage or white space. */
+
+.sidenav-container {
+  height: 100%;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.6);
 }
 
-.module-toggle {
-  margin-bottom: 20px;
+::ng-deep mat-sidenav {
+  width: 270px !important;
+  background: linear-gradient($dark-background, #2a2a2a);
+  color: $primary-text;
+  /* Or put your .sidebar styles here if needed */
 }
-
-.control-panel {
-  margin-top: 10px;
-  padding-left: 10px;
-  background-color: #1e1e1e; /* Dark theme background */
-
-}
-
-.streaming-container {
-  flex-grow: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-.placeholder-text {
-  font-size: 1.5rem;
-  font-weight: bold;
-  color: #999999; /* Gray placeholder text */
-}
-
 
 --------------------------------------------------
 File End
@@ -447,58 +586,74 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-viewer\cam-viewer.component.ts
 File type: .ts
+// cam-viewer.component.ts
 import { Component, OnInit } from '@angular/core';
 import { WebSocketService } from '../../services/web-socket.service';
 import { HttpConfigService } from '../../services/http-config.service';
+import { SidebarControlsComponent } from '../sidebar-controls/sidebar-controls.component';
+import { CamStreamsComponent } from '../cam-streams/cam-streams.component';
+import { BrowserModule } from '@angular/platform-browser';
+import { FormsModule } from '@angular/forms';
+import { MatButtonModule } from '@angular/material/button';
+import { MatExpansionModule } from '@angular/material/expansion';
+import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
+import { MatSidenavModule } from '@angular/material/sidenav';
+import { MatSlideToggleModule } from '@angular/material/slide-toggle';
+import { MatTableModule } from '@angular/material/table';
+import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
+import { AppRoutingModule } from '../../app-routing.module';
 
 @Component({
   selector: 'app-cam-viewer',
-  standalone: false,
   templateUrl: './cam-viewer.component.html',
   styleUrls: ['./cam-viewer.component.scss'],
+  standalone: true,
+  imports: [SidebarControlsComponent,CamStreamsComponent,    BrowserModule,
+      AppRoutingModule,
+      MatSlideToggleModule,
+      BrowserAnimationsModule,
+      FormsModule,
+      MatIconModule,
+      MatSidenavModule,
+      MatExpansionModule,
+      MatTableModule,
+      MatInputModule,
+      MatSelectModule,
+      MatButtonModule,
+      ]
 })
 export class CamViewerComponent implements OnInit {
-   // Sidebar toggles
-   depthModuleEnabled: boolean = false;
-   rgbCameraEnabled: boolean = false;
- 
-   // Control panel visibility
-   depthModuleVisible: boolean = false;
-   rgbCameraVisible: boolean = false;
- 
-   // Stream settings
-   showDepth: boolean = false;
-   showRGB: boolean = false;
-   depthImageUrl: string = '';
-   colorImageUrl: string = '';
- 
-   // Control panel settings
-   selectedDepthResolution: string = '640x480';
-   selectedDepthFrameRate: string = '30';
-   selectedRGBResolution: string = '640x480';
-   selectedRGBFrameRate: string = '30';
- 
+  // Stream toggles
+  showDepth = false;
+  showRGB = false;
 
-    // Exposure values
-  depthExposureValue: number = 203; // Default exposure for Depth Module
-  rgbExposureValue: number = 203; // Default exposure for RGB Camera
+  isReconfiguring = false;
 
-  depthMetadataEnabled: boolean = false;
-  rgbMetadataEnabled: boolean = false;
-  
+  // Streamed images
+  depthImageUrl: string = '';
+  colorImageUrl: string = '';
+  // Local copies of metadata booleans
+  depthMetadataOn = false;
+  rgbMetadataOn = false;
   constructor(
     private webSocketService: WebSocketService,
     private httpConfigService: HttpConfigService
   ) {}
 
   ngOnInit(): void {
+    // Start streaming
     this.webSocketService.startStream();
-    this.webSocketService.getVideoStream().subscribe((frame) => {
+
+    // Subscribe to incoming frames
+    this.webSocketService.getVideoStream().subscribe(frame => {
       if (this.showRGB) {
         this.colorImageUrl = 'data:image/jpeg;base64,' + frame.color;
       } else {
         this.colorImageUrl = '';
       }
+
       if (this.showDepth) {
         this.depthImageUrl = 'data:image/jpeg;base64,' + frame.depth;
       } else {
@@ -507,42 +662,56 @@ export class CamViewerComponent implements OnInit {
     });
   }
 
-  // Toggle Depth Module
-  toggleDepthModule(): void {
-    this.depthModuleVisible = !this.depthModuleVisible;
-    this.showDepth = this.depthModuleEnabled;
-    console.log('Depth Module:', this.depthModuleEnabled ? 'Enabled' : 'Disabled');
+  // Called when depth toggle changes
+  onDepthToggle(newValue: boolean) {
+    this.showDepth = newValue;
+    console.log('Depth Module:', newValue ? 'Enabled' : 'Disabled');
   }
 
-  // Toggle RGB Camera
-  toggleRGBCamera(): void {
-    this.rgbCameraVisible = !this.rgbCameraVisible;
-    this.showRGB = this.rgbCameraEnabled;
-    console.log('RGB Camera:', this.rgbCameraEnabled ? 'Enabled' : 'Disabled');
+
+  onRgbToggle(newValue: boolean) {
+    this.showRGB = newValue;
+    console.log('RGB Module:', newValue ? 'Enabled' : 'Disabled');
   }
 
-  // Update Depth Module Configuration
-  updateDepthResolution(): void {
-    console.log('Updating Depth Resolution:', this.selectedDepthResolution);
-    this.sendConfigurationUpdate('depth', this.selectedDepthResolution, this.selectedDepthFrameRate);
+
+  // Called when updating Depth config
+  updateDepthConfig(event: { resolution: string; frameRate: string }) {
+    this.isReconfiguring = true;
+    this.httpConfigService.updateConfiguration('depth', event.resolution, event.frameRate)
+      .subscribe(
+        response => {
+          console.log('Depth config updated', response);
+          alert(`Depth Updated: ${event.resolution}@${event.frameRate}fps`);
+          this.webSocketService.startStream();
+          this.isReconfiguring = false;
+        },
+        error => {
+          console.error('Error updating Depth config', error);
+          alert(`Error updating Depth: ${error.message}`);
+          this.isReconfiguring = false;
+        }
+      );
   }
 
-  updateDepthFrameRate(): void {
-    console.log('Updating Depth Frame Rate:', this.selectedDepthFrameRate);
-    this.sendConfigurationUpdate('depth', this.selectedDepthResolution, this.selectedDepthFrameRate);
+  // Called when updating RGB config
+  updateRGBConfig(event: { resolution: string; frameRate: string }) {
+    this.isReconfiguring = true; // show overlay
+    this.httpConfigService.updateConfiguration('rgb', event.resolution, event.frameRate)
+      .subscribe(
+        response => {
+          console.log('RGB config updated', response);
+          alert(`RGB Updated: ${event.resolution}@${event.frameRate}fps`);
+          this.webSocketService.startStream();
+          this.isReconfiguring = false; // hide overlay
+        },
+        error => {
+          console.error('Error updating RGB config', error);
+          alert(`Error updating RGB: ${error.message}`);
+          this.isReconfiguring = false; // hide overlay
+        }
+      );
   }
-
-  // Update RGB Module Configuration
-  updateRGBResolution(): void {
-    console.log('Updating RGB Resolution:', this.selectedRGBResolution);
-    this.sendConfigurationUpdate('rgb', this.selectedRGBResolution, this.selectedRGBFrameRate);
-  }
-
-  updateRGBFrameRate(): void {
-    console.log('Updating RGB Frame Rate:', this.selectedRGBFrameRate);
-    this.sendConfigurationUpdate('rgb', this.selectedRGBResolution, this.selectedRGBFrameRate);
-  }
-
   // Helper method to send configuration updates to the server
   private sendConfigurationUpdate(module: string, resolution: string, frameRate: string): void {
     this.httpConfigService.updateConfiguration(module, resolution, frameRate).subscribe(
@@ -557,45 +726,423 @@ export class CamViewerComponent implements OnInit {
       }
     );
   }
- // Method to update Depth Module Exposure
-  updateDepthExposure(): void {
-    console.log('Updating Depth Exposure:', this.depthExposureValue);
-    this.httpConfigService.updateExposure('depth', this.depthExposureValue).subscribe(
-      (response) => {
-        console.log('Depth Exposure Updated Successfully', response);
-      },
-      (error) => {
-        console.error('Error updating Depth Exposure', error);
-      }
+  updateDepthExposure(value: number) {
+    console.log('Updating Depth Exposure:', value);
+    this.httpConfigService.updateExposure('depth', value).subscribe(
+      response => console.log(response),
+      error => console.error(error)
     );
   }
 
-  // Method to update RGB Camera Exposure
-  updateRGBExposure(): void {
-    console.log('Updating RGB Exposure:', this.rgbExposureValue);
-    this.httpConfigService.updateExposure('rgb', this.rgbExposureValue).subscribe(
-      (response) => {
-        console.log('RGB Exposure Updated Successfully', response);
-      },
-      (error) => {
-        console.error('Error updating RGB Exposure', error);
-      }
-    );
-  }
-  toggleDepthMetadata(): void {
-    this.depthMetadataEnabled = !this.depthMetadataEnabled;
-    this.httpConfigService.toggleMetadata('depth').subscribe(
-      response => console.log('Depth metadata toggled', response),
+  updateRGBExposure(value: number) {
+    console.log('Updating RGB Exposure:', value);
+    this.httpConfigService.updateExposure('rgb', value).subscribe(
+      response => console.log(response),
       error => console.error(error)
     );
+  }
+  // Called when depth metadata toggle changes
+  onDepthMetadataToggle(newValue: boolean) {
+    this.depthMetadataOn = newValue;
+    console.log('Depth Metadata toggled to:', newValue);
+
+    // Call server to toggle metadata
+    this.httpConfigService.toggleMetadata('depth').subscribe(
+      (res) => console.log('[Depth Metadata]:', res),
+      (err) => console.error(err)
+    );
+  }
+
+  // Called when rgb metadata toggle changes
+  onRgbMetadataToggle(newValue: boolean) {
+    this.rgbMetadataOn = newValue;
+    console.log('RGB Metadata toggled to:', newValue);
+
+    // Call server to toggle metadata
+    this.httpConfigService.toggleMetadata('rgb').subscribe(
+      (res) => console.log('[RGB Metadata]:', res),
+      (err) => console.error(err)
+    );
+  }
+}
+
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\sidebar-controls\sidebar-controls.component.html
+File type: .html
+<div class="sidebar">
+    <h3>Camera Info</h3>
+    <div class="camera-info">
+      <p><strong>Name:</strong> {{ cameraName }}</p>
+      <p><strong>Serial:</strong> {{ cameraSerial }}</p>
+      <p><strong>Firmware:</strong> {{ cameraFirmware }}</p>
+      <p><strong>USB Type:</strong> {{ cameraUsb }}</p>
+    </div>
+    <h3>Modules</h3>
+  
+    <!-- DEPTH TOGGLE -->
+    <div class="module-toggle">
+      <mat-slide-toggle  
+        [(ngModel)]="depthModuleEnabled"
+        (ngModelChange)="onDepthToggle($event)">
+        Depth Module
+      </mat-slide-toggle>
+  
+      <!-- Depth Module Controls -->
+      <div *ngIf="depthModuleEnabled" class="control-panel">
+        <h4>Depth Module Controls</h4>
+        <!-- Resolution & Frame Rate -->
+        <p>Resolution:</p>
+        <select [(ngModel)]="selectedDepthResolution" (change)="onDepthResolutionChange()">
+          <option value="640x480">640x360</option>
+          <option value="1280x720">1280x720</option>
+        </select>
+  
+        <p>Frame Rate:</p>
+        <select [(ngModel)]="selectedDepthFrameRate" (change)="onDepthResolutionChange()">
+          <option value="15">15 FPS</option>
+          <option value="30">30 FPS</option>
+        </select>
+  
+        <p>Metadata:</p>
+        <mat-slide-toggle
+          [(ngModel)]="depthMetadataEnabled"
+          (ngModelChange)="onDepthMetadataToggle($event)">
+          Show Depth Metadata
+        </mat-slide-toggle>
+        
+        <p>Exposure:</p>
+        <input type="range" min="0" max="1000" step="50"
+               [(ngModel)]="depthExposureValue"
+               (change)="onDepthExposureChange()" />
+        {{ depthExposureValue }}
+      </div>
+    </div>
+  
+    <!-- RGB TOGGLE -->
+    <div class="module-toggle">
+      <mat-slide-toggle
+        [(ngModel)]="rgbCameraEnabled"
+        (ngModelChange)="onRgbToggle($event)">
+        RGB Camera
+      </mat-slide-toggle>
+  
+      <!-- RGB Camera Controls -->
+      <div *ngIf="rgbCameraEnabled" class="control-panel">
+        <h4>RGB Camera Controls</h4>
+        <p>Resolution:</p>
+        <select [(ngModel)]="selectedRGBResolution" (change)="onRgbResolutionChange()">
+          <option value="640x480">640x360</option>
+          <option value="1280x720">1280x720</option>
+        </select>
+  
+        <p>Frame Rate:</p>
+        <select [(ngModel)]="selectedRGBFrameRate" (change)="onRgbResolutionChange()">
+          <option value="15">15 FPS</option>
+          <option value="30">30 FPS</option>
+        </select>
+  
+        <p>Metadata:</p>
+        <mat-slide-toggle
+          [(ngModel)]="rgbMetadataEnabled"
+          (ngModelChange)="onRgbMetadataToggle($event)">
+          Show RGB Metadata
+        </mat-slide-toggle>
+  
+        <p>Exposure:</p>
+        <input type="range" min="0" max="1000" step="50"
+               [(ngModel)]="rgbExposureValue"
+               (change)="onRgbExposureChange()" />
+        {{ rgbExposureValue }}
+      </div>
+    </div>
+  </div>
+  
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\sidebar-controls\sidebar-controls.component.scss
+File type: .scss
+@import '../../styles/_variables.scss';
+.sidebar {
+    background: linear-gradient($dark-background, #2a2a2a); 
+    height: 100%;
+    padding: 1rem;
+    color: $primary-text;
+  
+    h3 {
+      color: $realsense-blue;
+      margin-top: 0;
+      margin-bottom: 0.5rem;
+    }
+  
+    .camera-info {
+      background-color: #2f2f2f;
+      padding: 0.5rem;
+      border: 1px solid #444;
+      margin-bottom: 1rem;
+  
+      p {
+        margin: 0.3rem 0;
+        color: $primary-text;
+        // If text is still not bright enough, use #ffffff
+      }
+    }
+  
+    .module-toggle {
+      margin-bottom: 1.5rem;
+  
+      mat-slide-toggle {
+        color: $primary-text !important;
+  
+        &.mat-checked {
+          .mat-slide-toggle-bar {
+            background-color: $realsense-blue !important;
+          }
+          .mat-slide-toggle-thumb {
+            background-color: $realsense-blue !important;
+          }
+        }
+      }
+  
+      .control-panel {
+        background-color: #2a2a2a;
+        border-left: 4px solid $realsense-blue;
+        padding: 0.5rem 1rem;
+        margin-top: 0.5rem;
+        mat-slide-toggle {
+            color: $primary-text;
+          }
+        h4 {
+          color: $realsense-blue;
+          margin-top: 0;
+        }
+  
+        p {
+          margin: 0.4rem 0;
+          color: $primary-text;
+        }
+  
+        input,
+        select {
+          color: $primary-text; 
+          background-color: #424242; 
+          border: 1px solid #555;
+        }
+  
+        input[type="range"] {
+          // range track & thumb
+          accent-color: $realsense-blue;
+        }
+
+      }
+    }
+  ::ng-deep .mat-mdc-slide-toggle .mdc-label {
+    color: $primary-text !important; // or #ffffff
+  }
+
+
   }
   
-  toggleRGBMetadata(): void {
-    this.rgbMetadataEnabled = !this.rgbMetadataEnabled;
-    this.httpConfigService.toggleMetadata('rgb').subscribe(
-      response => console.log('RGB metadata toggled', response),
-      error => console.error(error)
-    );
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\sidebar-controls\sidebar-controls.component.spec.ts
+File type: .ts
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { SidebarControlsComponent } from './sidebar-controls.component';
+
+describe('SidebarControlsComponent', () => {
+  let component: SidebarControlsComponent;
+  let fixture: ComponentFixture<SidebarControlsComponent>;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      declarations: [SidebarControlsComponent]
+    })
+    .compileComponents();
+
+    fixture = TestBed.createComponent(SidebarControlsComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
+
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+});
+
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\sidebar-controls\sidebar-controls.component.ts
+File type: .ts
+import { CommonModule } from '@angular/common';
+import { Component, OnInit, Output, EventEmitter } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { MatButtonModule } from '@angular/material/button';
+import { MatExpansionModule } from '@angular/material/expansion';
+import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
+import { MatSidenavModule } from '@angular/material/sidenav';
+import { MatSlideToggleModule } from '@angular/material/slide-toggle';
+import { MatTableModule } from '@angular/material/table';
+import { BrowserModule } from '@angular/platform-browser';
+import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
+import { AppRoutingModule } from '../../app-routing.module';
+import { CamViewerComponent } from '../cam-viewer/cam-viewer.component';
+import { HttpConfigService } from '../../services/http-config.service';
+
+@Component({
+  selector: 'app-sidebar-controls',
+  templateUrl: './sidebar-controls.component.html',
+  styleUrls: ['./sidebar-controls.component.scss'],
+  standalone: true,
+  imports: [
+    CommonModule,
+    BrowserModule,
+    AppRoutingModule,
+    MatSlideToggleModule,
+    BrowserAnimationsModule,
+    FormsModule,
+    MatIconModule,
+    MatSidenavModule,
+    MatExpansionModule,
+    MatTableModule,
+    MatInputModule,
+    MatSelectModule,
+    MatButtonModule,]
+})
+export class SidebarControlsComponent implements OnInit {
+  // Module toggles
+  depthModuleEnabled = false;
+  rgbCameraEnabled = false;
+
+  // Metadata toggles
+  depthMetadataEnabled = false;
+  rgbMetadataEnabled = false;
+
+  // Resolutions
+  selectedDepthResolution = '640x480';
+  selectedDepthFrameRate = '30';
+  selectedRGBResolution = '640x480';
+  selectedRGBFrameRate = '30';
+
+  // Exposures
+  depthExposureValue = 1000;
+  rgbExposureValue = 1000;
+
+  // Camera info variables
+  cameraName: string = '';
+  cameraSerial: string = '';
+  cameraFirmware: string = '';
+  cameraUsb: string = '';
+
+
+  // Outputs for toggles
+  @Output() depthToggleChange = new EventEmitter<boolean>();
+  @Output() rgbToggleChange = new EventEmitter<boolean>();
+  @Output() depthResolutionChange = new EventEmitter<{ resolution: string; frameRate: string }>();
+  @Output() rgbResolutionChange = new EventEmitter<{ resolution: string; frameRate: string }>();
+  @Output() depthExposureChange = new EventEmitter<number>();
+  @Output() rgbExposureChange = new EventEmitter<number>();
+  // NEW events for metadata
+  @Output() depthMetadataToggle = new EventEmitter<boolean>();
+  @Output() rgbMetadataToggle   = new EventEmitter<boolean>();
+  constructor(private httpConfigService: HttpConfigService) {}
+
+  ngOnInit() {
+    this.loadCameraInfo();
+  }
+
+
+  private loadCameraInfo() {
+    this.httpConfigService.getCameraInfo().subscribe({
+      next: (info) => {
+        this.cameraName = info.name || '';
+        this.cameraSerial = info.serial_number || '';
+        this.cameraFirmware = info.firmware_version || '';
+        this.cameraUsb = info.usb_type_descriptor || '';
+      },
+      error: (err) => {
+        console.error('Error fetching camera info:', err);
+      }
+    });
+  }
+
+  // Depth module toggled
+  onDepthToggle(newValue: boolean) {
+    console.log('Depth Module toggled to:', newValue);
+    this.depthToggleChange.emit(newValue);
+  
+    // If turned OFF, also turn OFF depth metadata if it's on
+    if (!newValue && this.depthMetadataEnabled) {
+      this.depthMetadataEnabled = false; // visually set toggle to off
+      this.depthMetadataToggle.emit(false); // notify the parent
+    }
+  }
+  // RGB module toggled
+  onRgbToggle(newValue: boolean) {
+    console.log('RGB Camera toggled to:', newValue);
+    this.rgbToggleChange.emit(newValue);
+
+    // If turned OFF, also turn OFF rgb metadata if it's on
+    if (!newValue && this.rgbMetadataEnabled) {
+      this.rgbMetadataEnabled = false;            // visually set toggle to off
+      this.rgbMetadataToggle.emit(false);         // notify the parent
+    }
+  }
+
+  onDepthMetadataToggle(newValue: boolean) {
+    console.log('Depth Metadata toggled to:', newValue);
+    this.depthMetadataToggle.emit(newValue);
+  }
+
+  onRgbMetadataToggle(newValue: boolean) {
+    console.log('RGB Metadata toggled to:', newValue);
+    this.rgbMetadataToggle.emit(newValue);
+  }
+
+
+  // Depth resolution/fps
+  onDepthResolutionChange() {
+    this.depthResolutionChange.emit({
+      resolution: this.selectedDepthResolution,
+      frameRate: this.selectedDepthFrameRate
+    });
+  }
+
+  // RGB resolution/fps
+  onRgbResolutionChange() {
+    this.rgbResolutionChange.emit({
+      resolution: this.selectedRGBResolution,
+      frameRate: this.selectedRGBFrameRate
+    });
+  }
+
+  // Depth exposure
+  onDepthExposureChange() {
+    this.depthExposureChange.emit(this.depthExposureValue);
+  }
+
+  // RGB exposure
+  onRgbExposureChange() {
+    this.rgbExposureChange.emit(this.rgbExposureValue);
   }
 }
 
@@ -641,6 +1188,7 @@ export class HttpConfigService {
   private apiUrl = 'http://localhost:5000/api/configure'; // Flask server URL
   private exposureApiUrl = 'http://localhost:5000/api/exposure'; // Endpoint for exposure updates
   private toggleMetadataUrl = 'http://localhost:5000/api/toggle_metadata'; // endpoint for metadata
+  private cameraInfoUrl = 'http://localhost:5000/api/camera_info'
   constructor(private http: HttpClient) { }
   updateConfiguration(module: string, resolution: string, frameRate: string): Observable<any> {
     const body = { module, resolution, frame_rate: frameRate };
@@ -651,11 +1199,14 @@ export class HttpConfigService {
     const body = { module, exposure: exposureValue };
     return this.http.post(this.exposureApiUrl, body);
   }
-  toggleMetadata(module: 'rgb' | 'depth'): Observable<any> {
-    const body = { module };
-    return this.http.post(this.toggleMetadataUrl, body);
-  }
+toggleMetadata(module: string): Observable<any> {
+  return this.http.post(this.toggleMetadataUrl, { module });
 }
+
+  getCameraInfo(): Observable<any> {
+    return this.http.get(this.cameraInfoUrl);
+  }
+} 
 
 --------------------------------------------------
 File End
@@ -721,6 +1272,21 @@ export class WebSocketService {
   }
 }
 
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\styles\_variables.scss
+File type: .scss
+// Example color variables 
+$dark-background: #1e1e1e;          // or #252526
+$darkest-background: #121212;       
+$realsense-blue: #009fde;
+$primary-text: #f0f0f0;             // near-whitish text
+$secondary-text: #b8b8b8;           // lighter gray for secondary text
+$link-color: #00aaff;               // or any accent you want
 
 --------------------------------------------------
 File End

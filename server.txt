@@ -2,6 +2,8 @@ Folder Structure
 --------------------------------------------------
 app/
     camera.py
+    camera_manager.py
+    metadata_helpers.py
     routes.py
     __init__.py
     statics/
@@ -14,7 +16,9 @@ app/
         camera.cpython-311.pyc
         camera.cpython-312.pyc
         camera.cpython-38.pyc
+        camera_manager.cpython-310.pyc
         init.cpython-38.pyc
+        metadata_helpers.cpython-310.pyc
         routes.cpython-310.pyc
         routes.cpython-311.pyc
         routes.cpython-312.pyc
@@ -308,55 +312,385 @@ File End
 --------------------------------------------------
 
 
+C:\Users\aknani\myenv\app\camera_manager.py
+File type: .py
+from typing import Optional, Dict
+import pyrealsense2 as rs
+import numpy as np
+import cv2
+import time
+import base64
+
+# If you are using a separate metadata_helpers file, import from there:
+from .metadata_helpers import gather_metadata_and_profile_info, overlay_in_top_left
+
+class CameraManager:
+    """
+    Manages Intel RealSense pipeline, configuration, and streaming for RGB & depth.
+    """
+
+    def __init__(self):
+        # Initialize pipeline and config
+        self.pipeline = rs.pipeline()
+        self.config = rs.config()
+
+        # Default settings for color and depth
+        self.current_settings = {
+            "color": {"width": 640, "height": 360, "fps": 30},
+            "depth": {"width": 640, "height": 360, "fps": 30},
+        }
+        self.default_settings = {
+            "color": {"width": 640, "height": 360, "fps": 30},
+            "depth": {"width": 640, "height": 360, "fps": 30},
+        }
+
+        # Streaming state
+        self.is_streaming = False
+
+        # Metadata toggles
+        self.metadata_toggles = {"rgb": False, "depth": False}
+
+        # Exposure values
+        self.exposure_value_rgb = 300
+        self.exposure_value_depth = 300
+
+        # Track last frame times for displayed FPS
+        self.last_color_time = 0.0
+        self.last_depth_time = 0.0
+        self.displayed_color_fps = 0.0
+        self.displayed_depth_fps = 0.0
+
+        # Keep references to sensors
+        self.color_sensor = None
+        self.depth_sensor = None
+        
+
+
+
+    def reset_to_default(self):
+        """
+        Stop the pipeline and reset all relevant fields to default values.
+        """
+        self.stop_stream()
+
+        # Restore default resolution/fps
+        self.current_settings = {
+            "color": dict(self.default_settings["color"]),
+            "depth": dict(self.default_settings["depth"]),
+        }
+
+        # Reset toggles
+        self.metadata_toggles = {"rgb": False, "depth": False}
+
+        # Reset exposure
+        self.exposure_value_rgb = 300
+        self.exposure_value_depth = 300
+        # At this point, we do not start the pipeline automatically because
+        # we might only start streaming once a new client connects
+        print("[CameraManager] Reset to default settings.")
+        
+        
+        
+        
+        
+    def configure_pipeline(self):
+        """
+        Applies the current_settings to self.config, restarts the pipeline.
+        """
+        if self.is_streaming:
+            self.stop_stream()
+
+        # Clear previous config
+        self.config.disable_all_streams()
+
+        # Enable color stream
+        c = self.current_settings["color"]
+        self.config.enable_stream(
+            rs.stream.color,
+            c["width"], c["height"], rs.format.bgr8, c["fps"]
+        )
+
+        # Enable depth stream
+        d = self.current_settings["depth"]
+        self.config.enable_stream(
+            rs.stream.depth,
+            d["width"], d["height"], rs.format.z16, d["fps"]
+        )
+
+        # Start pipeline
+        profile = self.pipeline.start(self.config)
+        self.is_streaming = True
+        print("[CameraManager] Pipeline started with:", self.current_settings)
+
+        # Cache sensor references
+        self._cache_sensors(profile)
+
+    def _cache_sensors(self, profile: rs.pipeline_profile):
+        """
+        Internal method to store references to RGB and Depth sensors once pipeline is started.
+        """
+        device = profile.get_device()
+        sensors = device.query_sensors()
+        for sensor in sensors:
+            name = sensor.get_info(rs.camera_info.name).lower()
+            if "rgb" in name:
+                self.color_sensor = sensor
+            elif "depth" in name:
+                self.depth_sensor = sensor
+
+        # Optionally disable auto-exposure for color
+        if self.color_sensor is not None:
+            self.color_sensor.set_option(rs.option.enable_auto_exposure, 0)
+            self.color_sensor.set_option(rs.option.exposure, self.exposure_value_rgb)
+
+        if self.depth_sensor is not None:
+             self.depth_sensor.set_option(rs.option.enable_auto_exposure, 0)
+             self.depth_sensor.set_option(rs.option.exposure, self.exposure_value_depth)
+
+    def stop_stream(self):
+        """
+        Stops the pipeline if running.
+        """
+        self.is_streaming = False
+        try:
+            self.pipeline.stop()
+            print("[CameraManager] Pipeline stopped.")
+        except Exception:
+            pass  # In case it's already stopped
+
+    def update_resolution_and_fps(self, module: str, width: int, height: int, fps: int):
+        """
+        Update resolution/fps in current_settings and reconfigure pipeline.
+        """
+        if module == "rgb":
+            self.current_settings["color"].update({"width": width, "height": height, "fps": fps})
+        elif module == "depth":
+            self.current_settings["depth"].update({"width": width, "height": height, "fps": fps})
+        else:
+            raise ValueError("Unknown module name")
+
+        # Reconfigure pipeline to apply new settings
+        self.configure_pipeline()
+
+    def toggle_metadata(self, module: str):
+        """
+        Enable/disable metadata overlay for the specified module (rgb or depth).
+        """
+        if module in self.metadata_toggles:
+            self.metadata_toggles[module] = not self.metadata_toggles[module]
+        print(f"[CameraManager] Metadata for {module} set to {self.metadata_toggles[module]}")
+
+    def set_exposure(self, module: str, value: int):
+        """
+        Update exposure for the specified module (rgb or depth).
+        """
+        if module == "rgb" and self.color_sensor:
+            self.exposure_value_rgb = value
+            self.color_sensor.set_option(rs.option.exposure, value)
+            print(f"[CameraManager] RGB exposure set to {value}")
+        elif module == "depth" and self.depth_sensor:
+            self.exposure_value_depth = value
+            self.depth_sensor.set_option(rs.option.exposure, value)
+            print(f"[CameraManager] Depth exposure set to {value}")
+        else:
+            print(f"[CameraManager] Invalid module or sensor not found for module={module}")
+
+    def generate_frames(self):
+        """
+        Generator that yields encoded frames (color, depth) in real time.
+        Suitable for passing to a WebSocket or Socket.IO 'emit' loop.
+        """
+        if not self.is_streaming:
+            self.configure_pipeline()
+
+        try:
+            while self.is_streaming:
+                frameset = self.pipeline.wait_for_frames()
+
+                color_frame = frameset.get_color_frame()
+                depth_frame = frameset.get_depth_frame()
+                if not color_frame or not depth_frame:
+                    continue
+
+                # Compute displayed FPS for color
+                now_c = time.time()
+                if self.last_color_time != 0:
+                    dt_c = now_c - self.last_color_time
+                    if dt_c > 0:
+                        self.displayed_color_fps = 1.0 / dt_c
+                self.last_color_time = now_c
+
+                # Compute displayed FPS for depth
+                now_d = time.time()
+                if self.last_depth_time != 0:
+                    dt_d = now_d - self.last_depth_time
+                    if dt_d > 0:
+                        self.displayed_depth_fps = 1.0 / dt_d
+                self.last_depth_time = now_d
+
+                # Convert frames to numpy
+                color_image = np.asanyarray(color_frame.get_data())
+                depth_colorized_frame = rs.colorizer().colorize(depth_frame)
+                depth_image = np.asanyarray(depth_colorized_frame.get_data())
+
+                # If metadata toggled on, gather info and overlay
+                if self.metadata_toggles["rgb"]:
+                    lines_rgb = gather_metadata_and_profile_info(color_frame)
+                    lines_rgb.append(f"Displayed FPS: {self.displayed_color_fps:.1f}")
+                    overlay_in_top_left(color_image, lines_rgb, text_color=(0, 255, 0))
+
+                if self.metadata_toggles["depth"]:
+                    lines_depth = gather_metadata_and_profile_info(depth_frame)
+                    lines_depth.append(f"Displayed FPS: {self.displayed_depth_fps:.1f}")
+                    overlay_in_top_left(depth_image, lines_depth, text_color=(255, 0, 0))
+
+                # Encode images as base64
+                _, color_buf = cv2.imencode(".jpg", color_image)
+                _, depth_buf = cv2.imencode(".jpg", depth_image)
+                color_encoded = base64.b64encode(color_buf).decode("utf-8")
+                depth_encoded = base64.b64encode(depth_buf).decode("utf-8")
+
+                yield {"color": color_encoded, "depth": depth_encoded}
+
+        except Exception as e:
+            print("[CameraManager] Error in generate_frames():", e)
+        finally:
+            self.stop_stream()
+
+
+
+    def get_device_info(self):
+        """
+        Returns basic info about the connected RealSense device.
+        If pipeline isn't running, it starts it so we can query device info.
+        """
+        if not self.is_streaming:
+            self.configure_pipeline()
+
+        profile = self.pipeline.get_active_profile()
+        device = profile.get_device()
+
+        info = {
+            "name": device.get_info(rs.camera_info.name),
+            "serial_number": device.get_info(rs.camera_info.serial_number),
+            "firmware_version": device.get_info(rs.camera_info.firmware_version),
+            "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
+        }
+        return info
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\myenv\app\metadata_helpers.py
+File type: .py
+import pyrealsense2 as rs
+import cv2
+
+def gather_metadata_and_profile_info(frame):
+    lines = []
+    # Check and add FPS if available
+    if frame.supports_frame_metadata(rs.frame_metadata_value.actual_fps):
+        hw_fps = frame.get_frame_metadata(rs.frame_metadata_value.actual_fps)
+        lines.append(f"hardware FPS: {hw_fps}")
+
+    # Check frame counter metadata
+    if frame.supports_frame_metadata(rs.frame_metadata_value.frame_counter):
+        fc = frame.get_frame_metadata(rs.frame_metadata_value.frame_counter)
+        lines.append(f"Frame Count: {fc}")
+
+    # Add resolution and pixel format
+    profile = rs.video_stream_profile(frame.get_profile())
+    w = profile.width()
+    h = profile.height()
+    fmt = profile.format()
+    lines.append(f"Resolution: {w}x{h}")
+    lines.append(f"Pixel Format: {fmt}")
+
+    return lines
+
+def overlay_in_top_left(image, lines, text_color=(0, 255, 0)):
+    if not lines:
+        return
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    thickness = 2
+    line_height = 25
+    margin = 5
+
+    # Calculate bounding box
+    max_width = 0
+    for line in lines:
+        text_size, _ = cv2.getTextSize(line, font, font_scale, thickness)
+        if text_size[0] > max_width:
+            max_width = text_size[0]
+
+    box_width = max_width + (margin * 2)
+    box_height = (line_height * len(lines)) + (margin * 2)
+
+    x = 5
+    y = 10
+
+    # Clamping to fit on screen
+    if x + box_width > image.shape[1]:
+        x = max(0, image.shape[1] - box_width - 10)
+    if y + box_height > image.shape[0]:
+        y = max(0, image.shape[0] - box_height - 10)
+
+    text_y = y + margin + line_height - 5
+    for line in lines:
+        cv2.putText(image, line, (x + margin, text_y), font, font_scale, text_color, thickness)
+        text_y += line_height
+
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
 C:\Users\aknani\myenv\app\routes.py
 File type: .py
-from flask import render_template, current_app,request,jsonify
+from flask import render_template, request, jsonify
 from app import socketio
-import pyrealsense2 as rs
-from .camera import (
-    configure_pipeline, generate_frames, toggle_metadata,
-    stop_generating_frames, streaming, current_settings,exposure_value,change_exposure
-)
-
+# Import the CameraManager
+from .camera_manager import CameraManager
 
 def init_routes(app):
+    # We assume an instance of CameraManager is attached to the app:
+    # app.camera_manager = CameraManager() (in __init__.py)
+
     @app.route('/')
     def index():
         return render_template('index.html')
+
     @app.route('/api/configure', methods=['POST'])
     def configure():
         """
-        Example: { "module": "rgb", "resolution": "1280x720", "frame_rate": 15 }
+        Example request body:
+        {
+          "module": "rgb",
+          "resolution": "1280x720",
+          "frame_rate": 15
+        }
         """
         try:
             data = request.json
-            module = data.get('module')  # "rgb" or "depth"
+            module = data.get('module')
             resolution = data.get('resolution')  # e.g. "1280x720"
             frame_rate = data.get('frame_rate')  # e.g. 15
-            if not module or not resolution or not frame_rate:
+
+            if not (module and resolution and frame_rate):
                 return jsonify({"error": "Missing data"}), 400
 
             width, height = map(int, resolution.split('x'))
+            app.camera_manager.update_resolution_and_fps(module, width, height, int(frame_rate))
 
-            if module == "rgb":
-                current_settings["color"]["width"] = width
-                current_settings["color"]["height"] = height
-                current_settings["color"]["fps"] = int(frame_rate)
-            elif module == "depth":
-                current_settings["depth"]["width"] = width
-                current_settings["depth"]["height"] = height
-                current_settings["depth"]["fps"] = int(frame_rate)
-            else:
-                return jsonify({"error": "Invalid module"}), 400
-
-            # Now reconfigure pipeline
-            configure_pipeline()
             return jsonify({
                 "message": f"{module.capitalize()} updated to {resolution} @ {frame_rate} FPS"
             }), 200
-
         except Exception as e:
-            print("Error in /api/configure:", e)
             return jsonify({"error": str(e)}), 500
 
     @app.route('/api/toggle_metadata', methods=['POST'])
@@ -365,73 +699,69 @@ def init_routes(app):
         module = data.get('module')
         if module not in ['rgb', 'depth']:
             return jsonify({"error": "Invalid module"}), 400
-        
-        toggle_metadata(module)
-        return jsonify({"message": f"{module.capitalize()} metadata toggled", "status": toggle_metadata[module]})
 
-      
-        
-        
-    @app.route('/api/stop_stream', methods=['POST'])
-    def stop_stream():
-        stop_generating_frames()
-        return jsonify({"message": "Streaming stopped"})
-    @socketio.on('connect')
-    def handle_connect():
-        print('Client connected')
-
-    @socketio.on('start_stream')
-    def start_stream():
-        print("Received start_stream event from client.")
-        for frame in generate_frames():
-            socketio.emit('video_frame', frame)
-
+        app.camera_manager.toggle_metadata(module)
+        return jsonify({"message": f"{module.capitalize()} metadata toggled"})
 
     @app.route('/api/exposure', methods=['POST'])
     def update_exposure():
+        """
+        Example request body:
+        {
+          "module": "rgb",
+          "exposure": 8500
+        }
+        """
         try:
-            # Parse the JSON payload from the client
             data = request.json
             module = data.get('module')
-            req_exposure_value = int(data.get('exposure'))  # Exposure value (e.g., 8500)
-            
-            print(data)
-            # Validate input
-            if not module or exposure_value is None:
-                return jsonify({"error": "Invalid input"}), 400
+            exposure_value = int(data.get('exposure'))
 
-            # if module == 'depth':
-            #     # Ensure depth sensor exists
-            #     if len(sensors) < 1:
-            #         return jsonify({"error": "Depth sensor not found"}), 500
-
-            #     depth_sensor = sensors[0]  # Assuming depth is the first sensor
-            #     if rs.option.exposure in depth_sensor.get_supported_options():
-            #         depth_sensor.set_option(rs.option.exposure, exposure_value)
-            #         print(f"Depth Module exposure updated to {exposure_value}")
-            #     else:
-            #         return jsonify({"error": "Exposure option not supported for Depth Module"}), 400
-
-            if module == 'rgb':
-                # Ensure RGB sensor exists
-                exposure_value["status"] = req_exposure_value
-                change_exposure()
-
-            else:
-                return jsonify({"error": "Invalid module"}), 400
+            app.camera_manager.set_exposure(module, exposure_value)
 
             return jsonify({
-                "message": f"{module.capitalize()} Module exposure updated",
+                "message": f"{module.capitalize()} exposure updated",
                 "exposure": exposure_value
             }), 200
-
         except Exception as e:
-            print(f"Error: {e}")
-            return jsonify({"error": str(e)}), 500 
+            return jsonify({"error": str(e)}), 500
+
+    @app.route('/api/stop_stream', methods=['POST'])
+    def stop_stream():
+        app.camera_manager.stop_stream()
+        return jsonify({"message": "Streaming stopped"})
 
 
-# Call this function in __init__.py after creating the app
-# init_routes(current_app)
+            
+    @app.route('/api/camera_info', methods=['GET'])
+    def camera_info():
+        """
+        Returns device info from the active RealSense camera.
+        """
+        try:
+            info = app.camera_manager.get_device_info()
+            print(info)
+            return jsonify(info), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+        
+        
+        
+        #############socket io#############
+    @socketio.on('connect')
+    def handle_connect():
+        print('Client connected')
+    @socketio.on('disconnect')
+    def handle_disconnect():
+        print('Client disconnected; resetting camera settings to defaults.')
+        app.camera_manager.reset_to_default()
+        
+    @socketio.on('start_stream')
+    def start_stream():
+
+        print("Received start_stream event from client.")
+        for frame in app.camera_manager.generate_frames():
+            socketio.emit('video_frame', frame)
 
 --------------------------------------------------
 File End
@@ -443,19 +773,20 @@ File type: .py
 from flask import Flask
 from flask_cors import CORS
 from flask_socketio import SocketIO
-import time
+from .camera_manager import CameraManager
 
 app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 def create_app():
-    app.config.from_object('config.Config')
 
     socketio.init_app(app)
 
+    # Instantiate and attach to app
+    app.camera_manager = CameraManager()
+
     with app.app_context():
-        from app import routes
         from .routes import init_routes
         init_routes(app)
 
