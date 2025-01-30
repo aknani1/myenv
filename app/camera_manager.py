@@ -27,6 +27,8 @@ class CameraManager:
             "color": {"width": 640, "height": 360, "fps": 30},
             "depth": {"width": 640, "height": 360, "fps": 30},
         }
+        #device connection status
+        self.device_connected = False
 
         # Streaming state
         self.is_streaming = False
@@ -76,11 +78,7 @@ class CameraManager:
         
         
         
-        
     def configure_pipeline(self):
-        """
-        Applies the current_settings to self.config, restarts the pipeline.
-        """
         if self.is_streaming:
             self.stop_stream()
 
@@ -101,14 +99,20 @@ class CameraManager:
             d["width"], d["height"], rs.format.z16, d["fps"]
         )
 
-        # Start pipeline
-        profile = self.pipeline.start(self.config)
-        self.is_streaming = True
-        print("[CameraManager] Pipeline started with:", self.current_settings)
+        try:
+            # Start pipeline and update status only on success
+            profile = self.pipeline.start(self.config)
+            self.is_streaming = True
+            self.device_connected = True  # Correct placement after successful start
+            print("[CameraManager] Pipeline started with:", self.current_settings)
 
-        # Cache sensor references
-        self._cache_sensors(profile)
-
+            # Cache sensor references
+            self._cache_sensors(profile)
+        except Exception as e:
+            self.device_connected = False
+            self.is_streaming = False
+            print(f"[CameraManager] Failed to start pipeline: {e}")
+            raise
     def _cache_sensors(self, profile: rs.pipeline_profile):
         """
         Internal method to store references to RGB and Depth sensors once pipeline is started.
@@ -189,62 +193,71 @@ class CameraManager:
 
         try:
             while self.is_streaming:
-                frameset = self.pipeline.wait_for_frames()
-                color_frame = frameset.get_color_frame()
-                depth_frame = frameset.get_depth_frame()
-                if not color_frame or not depth_frame:
-                    continue
+                try:
+                    frameset = self.pipeline.wait_for_frames()
+                    color_frame = frameset.get_color_frame()
+                    depth_frame = frameset.get_depth_frame()
+                    if not color_frame or not depth_frame:
+                        continue
 
-                # Calculate displayed FPS
-                now_c = time.time()
-                if self.last_color_time != 0:
-                    dt_c = now_c - self.last_color_time
-                    if dt_c > 0:
-                        self.displayed_color_fps = 1.0 / dt_c
-                self.last_color_time = now_c
+                    # Calculate displayed FPS
+                    now_c = time.time()
+                    if self.last_color_time != 0:
+                        dt_c = now_c - self.last_color_time
+                        if dt_c > 0:
+                            self.displayed_color_fps = 1.0 / dt_c
+                    self.last_color_time = now_c
 
-                now_d = time.time()
-                if self.last_depth_time != 0:
-                    dt_d = now_d - self.last_depth_time
-                    if dt_d > 0:
-                        self.displayed_depth_fps = 1.0 / dt_d
-                self.last_depth_time = now_d
+                    now_d = time.time()
+                    if self.last_depth_time != 0:
+                        dt_d = now_d - self.last_depth_time
+                        if dt_d > 0:
+                            self.displayed_depth_fps = 1.0 / dt_d
+                    self.last_depth_time = now_d
 
-                # Convert frames to base64
-                color_image = np.asanyarray(color_frame.get_data())
-                depth_colorized_frame = rs.colorizer().colorize(depth_frame)
-                depth_image = np.asanyarray(depth_colorized_frame.get_data())
+                    # Convert frames to base64
+                    color_image = np.asanyarray(color_frame.get_data())
+                    depth_colorized_frame = rs.colorizer().colorize(depth_frame)
+                    depth_image = np.asanyarray(depth_colorized_frame.get_data())
 
-                _, color_buf = cv2.imencode(".jpg", color_image)
-                _, depth_buf = cv2.imencode(".jpg", depth_image)
-                color_encoded = base64.b64encode(color_buf).decode("utf-8")
-                depth_encoded = base64.b64encode(depth_buf).decode("utf-8")
+                    _, color_buf = cv2.imencode(".jpg", color_image)
+                    _, depth_buf = cv2.imencode(".jpg", depth_image)
+                    color_encoded = base64.b64encode(color_buf).decode("utf-8")
+                    depth_encoded = base64.b64encode(depth_buf).decode("utf-8")
 
-                # Gather metadata as lists of text lines (if toggled)
-                lines_rgb = []
-                lines_depth = []
-                if self.metadata_toggles["rgb"]:
-                    lines_rgb = gather_metadata_and_profile_info(color_frame)
-                    lines_rgb.append(f"Displayed FPS: {self.displayed_color_fps:.1f}")
+                    # Gather metadata as lists of text lines (if toggled)
+                    lines_rgb = []
+                    lines_depth = []
+                    if self.metadata_toggles["rgb"]:
+                        lines_rgb = gather_metadata_and_profile_info(color_frame)
+                        lines_rgb.append(f"Displayed FPS: {self.displayed_color_fps:.1f}")
 
-                if self.metadata_toggles["depth"]:
-                    lines_depth = gather_metadata_and_profile_info(depth_frame)
-                    lines_depth.append(f"Displayed FPS: {self.displayed_depth_fps:.1f}")
+                    if self.metadata_toggles["depth"]:
+                        lines_depth = gather_metadata_and_profile_info(depth_frame)
+                        lines_depth.append(f"Displayed FPS: {self.displayed_depth_fps:.1f}")
 
-                yield {
-                    "color": color_encoded,
-                    "depth": depth_encoded,
-                    "metadata": {
-                        "rgb": lines_rgb,
-                        "depth": lines_depth
+                    yield {
+                        "color": color_encoded,
+                        "depth": depth_encoded,
+                        "metadata": {
+                            "rgb": lines_rgb,
+                            "depth": lines_depth
+                        }
                     }
-                }
-
+                except RuntimeError as e:
+                    if "Frame didn't arrive within 5000" in str(e):
+                        print("Device disconnected!")
+                        self.device_connected = False
+                        self.stop_stream()
+                        socketio.emit('device_status', {'connected': False})  # Add this
+                        break
+                    raise e
         except Exception as e:
-            print("[CameraManager] Error in generate_frames():", e)
+            print(f"Streaming error: {str(e)}")
+            self.device_connected = False
+            self.stop_stream()
         finally:
             self.stop_stream()
-
 
     def get_device_info(self):
         """
@@ -263,4 +276,5 @@ class CameraManager:
             "firmware_version": device.get_info(rs.camera_info.firmware_version),
             "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
         }
+        self.device_connected = True
         return info

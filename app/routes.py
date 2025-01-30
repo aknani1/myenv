@@ -97,14 +97,32 @@ def init_routes(app):
     @socketio.on('connect')
     def handle_connect():
         print('Client connected')
+        try:
+            # Check if device is connected and working
+            if app.camera_manager.is_streaming:
+                socketio.emit('device_status', {'connected': True})
+            else:
+                # Try to get device info to verify connection
+                info = app.camera_manager.get_device_info()
+                socketio.emit('device_status', {'connected': True})
+        except RuntimeError as e:
+            print(f"Device connection error: {str(e)}")
+            socketio.emit('device_status', {'connected': False})
+        except Exception as e:
+            print(f"General connection error: {str(e)}")
+            socketio.emit('device_status', {'connected': False})
+
     @socketio.on('disconnect')
     def handle_disconnect():
         print('Client disconnected; resetting camera settings to defaults.')
         app.camera_manager.reset_to_default()
+        socketio.emit('device_status', {'connected': False})
+
         
     @socketio.on('start_stream')
     def start_stream():
-
         print("Received start_stream event from client.")
         for frame in app.camera_manager.generate_frames():
             socketio.emit('video_frame', frame)
+            
+            
