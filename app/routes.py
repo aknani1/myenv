@@ -3,6 +3,7 @@ from app import socketio
 from .camera_manager import CameraManager
 from .config import DEFAULTS
 
+streaming_active = False
 
 def init_routes(app):
     @app.route('/')
@@ -17,8 +18,9 @@ def init_routes(app):
         
     @app.route('/api/hard_reset', methods=['POST'])
     def hard_reset():
+        global streaming_active
         try:
-            app.camera_manager.is_streaming = False
+            streaming_active = False  # Force stop streaming
             app.camera_manager.reset_to_default()
             app.camera_manager.configure_pipeline()
             return jsonify({"message": "Full system reset complete"}), 200
@@ -120,35 +122,43 @@ def init_routes(app):
     # Update disconnect handler
     @socketio.on('disconnect')
     def handle_disconnect():
-        print("[Socket.IO] Client disconnected.")
-        app.camera_manager.reset_software_defaults()
-        
+        global streaming_active
+        streaming_active = False
+        app.camera_manager.reset_to_default()
+        print("Full reset on client disconnect")
     @socketio.on('start_stream')
     def handle_start_stream():
-            try:
-                print("recieved start_Stream")
-                if(app.camera_manager.is_streaming):
-                    print("already streaming")
-                    return
-                app.camera_manager.configure_pipeline()
-                socketio.start_background_task(stream_frames)  # spawns the generator
-            except Exception as e:
-                socketio.emit('device_status', {'connected': False, 'reason': str(e)})
+            """Explicit stream start from client"""
+            global streaming_active
+            if not streaming_active:
+                streaming_active = True
+                try:
+                    # Ensure pipeline is configured
+                    if not app.camera_manager.is_streaming:
+                        app.camera_manager.configure_pipeline()
+                    # Start background stream
+                    socketio.start_background_task(stream_frames)
+                except Exception as e:
+                    socketio.emit('device_status', {'connected': False, 'reason': str(e)})
 
     def stream_frames():
+        global streaming_active
         try:
             for frame in app.camera_manager.generate_frames():
-                # If streaming was stopped (is_streaming=False), break
-                if not app.camera_manager.is_streaming:
+                if not streaming_active:
                     break
                 socketio.emit('video_frame', frame)
         except Exception as e:
             print(f"Streaming error: {str(e)}")
         finally:
+            streaming_active = False
             app.camera_manager.stop_stream()
             
     @socketio.on('stop_stream')
     def handle_stop_stream():
-        if app.camera_manager.is_streaming:
-            app.camera_manager.stop_stream()
+        global streaming_active
+        if streaming_active:
+            streaming_active = False
             print("[server] Stopping stream for client.")
+            # This will break the generator loop in stream_frames
+            app.camera_manager.stop_stream()

@@ -13,26 +13,10 @@ class CameraManager:
     """
 
     def __init__(self):
-        """
-        Sets up initial resources and returns a CameraManager at default settings.
-        """
-        # RealSense pipeline and config
         self.pipeline = rs.pipeline()
         self.config = rs.config()
-
-        # Store your default settings (from config.py or similar)
         self.default_settings = DEFAULTS
 
-        # Initialize all internal defaults (exposures, resolution, toggles, etc.)
-        self._init_internal_defaults()
-
-    def _init_internal_defaults(self):
-        """
-        Resets internal states such as resolution, FPS, exposure, and any toggles 
-        back to the DEFAULTS specified in self.default_settings. This does NOT 
-        physically reset the hardware or remove the device from context.
-        """
-        # Reapply resolution & FPS defaults
         self.current_settings = {
             "color": {
                 "width": self.default_settings["color"]["width"],
@@ -46,27 +30,28 @@ class CameraManager:
             }
         }
 
-        # Reset streaming-status flags
+        # Device connection status
         self.device_connected = False
+
+        # Streaming state
         self.is_streaming = False
 
-        # Reset metadata toggles
+        # Metadata toggles
         self.metadata_toggles = {"rgb": False, "depth": False}
 
-        # Reset exposure values
+        # Exposure values
         self.exposure_value_rgb = self.default_settings["color"]["exposure"]
         self.exposure_value_depth = self.default_settings["depth"]["exposure"]
 
-        # Reset auxiliary states (FPS counters, sensors, etc.)
+        # FPS tracking
         self.last_color_time = 0.0
         self.last_depth_time = 0.0
         self.displayed_color_fps = 0.0
         self.displayed_depth_fps = 0.0
+
+        # Sensor references
         self.color_sensor = None
         self.depth_sensor = None
-
-        print("[CameraManager] Internal defaults re-initialized.")
-        
     def get_device_info(self):
         """
         Returns basic info about the connected RealSense device.
@@ -298,21 +283,3 @@ class CameraManager:
                 self.stop_stream()
             finally:
                 self.stop_stream()
-                # camera_manager.py
-
-    def reset_software_defaults(self):
-        """
-        Resets internal config to defaults but does NOT
-        do a hardware-level reset (i.e., does not remove the device from context).
-        """
-        # Stop any streaming
-        self.stop_stream()
-
-        # Reinitialize self to restore default settings (exposures, resolution, toggles, etc.)
-        # This calls __init__() again, or you can do it manually if you wish.
-        self._init_internal_defaults()
-        # If needed, preserve self.device_connected status from before
-
-        print("[CameraManager] Software-only reset to in-memory defaults (hardware unchanged).")
-
-
