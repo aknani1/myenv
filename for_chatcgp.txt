@@ -1,94 +1,46 @@
-Project Overview: RealSense Camera Viewer
-This project is a web-based application designed to manage and stream video feeds from an Intel RealSense camera. It provides users with the ability to configure camera settings (e.g., resolution, frame rate, exposure) and view RGB and depth streams side by side. The application also overlays real-time metadata on the video streams, as shown in the provided image.
-Purpose of the Project
-The primary purpose of this project is to:
-Stream RGB and Depth Feeds: Display live video streams from the Intel RealSense camera.
-Configure Camera Settings: Allow users to dynamically adjust settings like resolution, frame rate, and exposure.
-Display Metadata: Show real-time metadata (e.g., frame timestamp, FPS, resolution) overlaid on the video streams.
-Modular Control: Enable or disable RGB and depth modules independently.
-Interactive UI: Provide a clean and responsive interface for managing camera functions.
-Technologies Used
-Client-Side (Angular)
-Framework: Angular
-UI Components: Angular Material
-Features:
-Sidebar for toggling RGB and Depth modules.
-Dynamic control panels for each module.
-Streaming container for displaying video feeds.
-Dark-themed UI styled for better user experience.
-Server-Side (Flask)
-Framework: Flask
-RealSense Integration: pyrealsense2 library
-Features:
-REST API for configuration updates (e.g., /api/configure, /api/exposure).
-WebSocket for real-time video streaming using Flask-SocketIO.
-Key Functionalities
-1. Video Streaming
-The server streams RGB and depth frames in real time using Intel RealSense SDK (pyrealsense2).
-Frames are encoded as JPEG images and sent to the client via WebSocket.
-2. Metadata Overlay
-The server extracts metadata using get_frame_metadata() for supported attributes.
-Metadata is dynamically overlaid on the video frames using OpenCV's cv2.putText().
-3. Camera Configuration
-Users can configure:
-Resolution (e.g., 640x480, 1280x720).
-Frame rate (e.g., 15 FPS, 30 FPS).
-Exposure (manual adjustment).
-Configuration updates are sent to the server via REST API or WebSocket.
-4. Modular Control
-Users can enable or disable RGB and Depth modules independently.
-When a module is toggled on, its control panel becomes visible.
+im working on making a webviewer for intel realsense camera that controls the camera and mimics the viewer that they has ,
+here is and overview of what is there :
+Below is a high-level, end-to-end overview of how the current Intel RealSense viewer application works:
 
-Detailed Logic and Methods
-1. Server-Side Logic
-Video Streaming (camera.py)
-A pipeline is created using pyrealsense2 to stream both RGB and depth frames.
-Frames are captured using pipeline.wait_for_frames().
-Metadata is extracted using frame.get_frame_metadata() for supported attributes.
-Frames are encoded as JPEG images using OpenCV (cv2.imencode()) and sent to the client via WebSocket.
-Metadata Overlay
-Metadata such as frame timestamp, hardware FPS, resolution, etc., is displayed on the video stream.
-OpenCV's cv2.putText() is used to render text onto the frames dynamically.
-API Endpoints (routes.py)
-/api/configure: Updates camera settings like resolution and frame rate.
-/api/exposure: Adjusts exposure settings for RGB or depth modules.
-2. Client-Side Logic
-UI Components (cam-viewer.component.html)
-A sidebar allows toggling of RGB and Depth modules.
-Control panels provide sliders and dropdowns for adjusting settings like resolution, frame rate, and exposure.
-The streaming container displays video feeds or a placeholder when no stream is active.
-WebSocket Communication (web-socket.service.ts)
-The client connects to the server via WebSocket using Socket.IO.
-Video frames are received in real time as base64-encoded JPEG images.
-REST API Communication (http-config.service.ts)
-Configuration updates are sent to the server via HTTP POST requests.
-Responses are handled asynchronously to update the UI dynamically.
-Requirements
-Hardware
-Intel RealSense Camera (e.g., D435).
-A computer capable of running Python and Angular applications.
-Software
-Python 3.x with required libraries:
-Flask
-Flask-CORS
-Flask-SocketIO
-pyrealsense2
-OpenCV
-NumPy
-Node.js with Angular CLI:
-Angular Material
-How It Works
-The user opens the Angular client in a browser.
-The client connects to the Flask server via WebSocket.
-The user enables an RGB or Depth module from the sidebar.
-The server starts streaming frames from the RealSense camera.
-Metadata is extracted from each frame and overlaid on the video stream.
-The client receives frames in real time and displays them in the streaming container.
+1. Server-Side (Flask + Socket.IO):  
+   • CameraManager (camera_manager.py) initializes and manages the Intel RealSense pipeline using the PyRealSense2 library.  
+   • On startup, it configures the color and depth streams with default width, height, fps, and exposure values (from config.py).  
+   • The pipeline is started/stopped via configure_pipeline() and stop_stream().  
+   • generate_frames() runs in a loop, grabbing frames from the camera, converting them to base64 JPEGs, optionally collecting metadata (ex: frame counter, resolution, hardware FPS, etc.), and emitting them to connected Socket.IO clients.  
+   • If the camera disconnects mid-stream, the CameraManager stops the pipeline and emits a “device_status” event (connected=false, reason=camera_disconnected). This updates clients on the front end so they can handle the disconnection gracefully.
+
+2. Flask Routes (routes.py):  
+   • Provide REST API endpoints (e.g., /api/configure, /api/exposure, /api/set_metadata, /api/hard_reset) to reconfigure the camera or reset it to default.  
+   • The /api/configure endpoint receives resolution and frame rate, and instructs the CameraManager to update those settings.  
+   • The /api/exposure endpoint updates exposure for either the color or depth sensor.  
+   • The /api/set_metadata endpoint toggles on/off the collection of metadata for a given module (rgb or depth).  
+   • /api/hard_reset attempts to reset the hardware and returns the system to default settings.
+
+3. Socket.IO Interface:  
+   • When a client connects, the server checks if the camera is available. If not available, it emits device_status with the reason.  
+   • Once connected, the client can send “start_stream” to begin receiving frames. The server calls generate_frames() in a background task, and continuously emits “video_frame” events to that client with color/depth data and metadata.  
+   • If the client calls “stop_stream,” the server stops sending frames and halts the camera pipeline.  
+   • device_status events inform the client in real time if something goes wrong (disconnection, etc.).
+
+4. Client-Side (Angular):  
+   • An Angular application subscribes to these Socket.IO events using a WebSocketService that handles connecting/disconnecting to the Flask server, receiving the “video_frame” data, and managing device connection status.  
+   • cam-viewer.component is the main container, which starts the stream on connection and updates UI states on disconnection.  
+   • cam-streams.component displays the incoming color or depth images (base64 JPEG) in <img> tags. It also overlays metadata if enabled. A loading spinner is shown until each image has loaded.  
+   • sidebar-controls.component includes various toggles and sliders (e.g., enabling depth/RGB streams, changing resolution, adjusting exposure, toggling metadata) and sends the appropriate REST or Socket.IO commands to the Flask server.  
+   • The user can also trigger a “Hard Reset” from the sidebar, which calls the server’s reset logic to revert to default settings.
+
+Overall Flow:  
+• The user opens the Angular front end. Angular connects to the Flask server via Socket.IO.  
+• On successful connection, Angular instructs the server to start streaming; the server (CameraManager) dispatches frames via “video_frame” events.  
+• Angular toggles (depth, RGB, etc.) or adjustments (exposure, resolution) will call server endpoints to change camera pipeline configuration in real time, and the new frames are then broadcast to the client.
+
+ ill give you my code and lets work on fixing things with it, first look at it and tell me if there is a simplification possible in the connection side of things, tell me if there something that is implemented in a wrong way or overcomplicated way, im working on making the connection stable and as simple as possible, while maintaing stability in all senarios, focus on the connections and controls , look if there is a well defined api and one way of truth to do tasks , and that everything aligns well and works in the right way with each other, 
+here is my server :
 Folder Structure
 --------------------------------------------------
 app/
-    camera.py
     camera_manager.py
+    config.py
     metadata_helpers.py
     routes.py
     __init__.py
@@ -99,10 +51,11 @@ app/
         index.html
     __pycache__/
         camera.cpython-310.pyc
-        camera.cpython-311.pyc
+        camera.cpython-311.pyc                                
         camera.cpython-312.pyc
         camera.cpython-38.pyc
         camera_manager.cpython-310.pyc
+        config.cpython-310.pyc
         init.cpython-38.pyc
         metadata_helpers.cpython-310.pyc
         routes.cpython-310.pyc
@@ -120,315 +73,42 @@ File Contents
 --------------------------------------------------
 
 
-C:\Users\aknani\myenv\app\camera.py
-File type: .py
-import pyrealsense2 as rs
-import numpy as np
-import cv2
-import base64
-from app import socketio
-import time
-
-# Store standard config and pipeline at module level
-pipeline = rs.pipeline()
-config = rs.config()
-
-# Track streaming state
-streaming = {"status": True}
-exposure_value = {"status": 80}
-# Keep separate current settings for color and depth
-# e.g., resolution and fps
-current_settings = {
-    "color": {
-        "width": 640,
-        "height": 360,
-        "fps": 30
-    },
-    "depth": {
-        "width": 640,
-        "height": 360,
-        "fps": 30
-    }
-}
-
-# Track last frame times for displayed FPS calculation
-last_color_time = 0.0
-last_depth_time = 0.0
-displayed_color_fps = 0.0
-displayed_depth_fps = 0.0
-
-# Metadata toggles
-metadata_toggles = {
-    "rgb": False,
-    "depth": False
-}
-AVAILABLE_METADATA = [
-    (rs.frame_metadata_value.frame_counter,       "Frame Counter"),
-    (rs.frame_metadata_value.sensor_timestamp,    "Sensor Timestamp"),
-    (rs.frame_metadata_value.backend_timestamp,   "Backend Timestamp"),
-    (rs.frame_metadata_value.actual_fps,          "Actual FPS"),
-    (rs.frame_metadata_value.auto_exposure,       "Auto Exposure"),
-    (rs.frame_metadata_value.white_balance,       "White Balance"),
-    (rs.frame_metadata_value.brightness,          "Brightness"),
-    (rs.frame_metadata_value.contrast,            "Contrast"),
-    (rs.frame_metadata_value.saturation,          "Saturation"),
-    (rs.frame_metadata_value.sharpness,           "Sharpness"),
-]
-
-
-def stop_generating_frames():
-    global streaming, pipeline
-    streaming["status"] = False
-    try:
-        pipeline.stop()
-    except Exception:
-        pass
-
-
-def configure_pipeline():
-    """
-    Applies the global current_settings to the pipeline config,
-    stopping the pipeline if running, then re-starting it.
-    """
-    global pipeline, config, streaming
-
-    # If streaming is active, stop first
-    if streaming["status"]:
-        stop_generating_frames()
-
-    # Clear previous config
-    config.disable_all_streams()
-
-    # Enable color stream with the updated resolution/fps
-    c = current_settings["color"]
-    config.enable_stream(
-        rs.stream.color,
-        c["width"],
-        c["height"],
-        rs.format.bgr8,
-        c["fps"]
-    )
-
-    # Enable depth stream likewise
-    d = current_settings["depth"]
-    config.enable_stream(
-        rs.stream.depth,
-        d["width"],
-        d["height"],
-        rs.format.z16,
-        d["fps"]
-    )
-
-    profile = pipeline.start(config)
-    streaming["status"] = True
-    print("[Pipeline] Started with new configuration:", current_settings)
-    return profile
-
-
-def gather_metadata_and_profile_info(frame):
-    """
-    Gather hardware fps from metadata if available, plus resolution, etc.
-    """
-    lines = []
-    # 1) Possibly read actual_fps if supported
-    if frame.supports_frame_metadata(rs.frame_metadata_value.actual_fps):
-        hw_fps = frame.get_frame_metadata(rs.frame_metadata_value.actual_fps)
-        lines.append(f"Actual FPS: {hw_fps}")
-
-    # 2) Additional metadata fields as desired...
-    # e.g., frame_number, sensor_timestamp, etc.
-    if frame.supports_frame_metadata(rs.frame_metadata_value.frame_counter):
-        fc = frame.get_frame_metadata(rs.frame_metadata_value.frame_counter)
-        lines.append(f"Frame Count: {fc}")
-
-    # 3) Profile info
-    profile = rs.video_stream_profile(frame.get_profile())
-    w = profile.width()
-    h = profile.height()
-    fmt = profile.format()
-    lines.append(f"Resolution: {w}x{h}")
-    lines.append(f"Pixel Format: {fmt}")
-
-    return lines
-
-def overlay_in_top_left(image, lines, text_color=(0, 255, 0)):
-    """
-    Draws a bounding box of text lines in the top-left corner
-    without letting it go offscreen.
-    """
-    if not lines:
-        return
-
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.6
-    thickness = 2
-    line_height = 25
-    margin = 5
-
-    # Determine bounding box size
-    max_width = 0
-    for line in lines:
-        (text_size, _) = cv2.getTextSize(line, font, font_scale, thickness)
-        if text_size[0] > max_width:
-            max_width = text_size[0]
-
-    box_width = max_width + (margin * 2)
-    box_height = (line_height * len(lines)) + (margin * 2)
-
-    x = 150
-    y = 15
-
-    # Clamping
-    if x + box_width > image.shape[1]:
-        x = max(0, image.shape[1] - box_width - 10)
-    if y + box_height > image.shape[0]:
-        y = max(0, image.shape[0] - box_height - 10)
-
-    
-    text_y = y + margin + line_height - 5
-    for line in lines:
-        cv2.putText(
-            image,
-            line,
-            (x + margin, text_y),
-            font,
-            font_scale,
-            text_color,
-            thickness
-        )
-        text_y += line_height
-        
-        
-        
-def generate_frames():
-    """
-    Continuously yield frames from the pipeline with metadata overlays,
-    plus displayed FPS.
-    """
-    global last_color_time, displayed_color_fps
-    global last_depth_time, displayed_depth_fps
-    global color_sensor
-
-    profile = configure_pipeline()
-    device = profile.get_device()
-    sensors = device.query_sensors()
-
-    for sensor in sensors:
-        if sensor.get_info(rs.camera_info.name) == "RGB Camera":
-            color_sensor = sensor
-            break
-
-    if color_sensor is None:
-        raise RuntimeError("Color sensor not found!")
-
-    # Step 4: Disable auto-exposure
-    color_sensor.set_option(rs.option.enable_auto_exposure, 0)
-
-    # Step 5: Set manual exposure (e.g., 1000 microseconds)
-    #exposure_value = 1000  # Adjust this value as needed
-    print(f"Manual exposure set to {exposure_value} microseconds.")
-
-
-    try:
-        while streaming["status"]:
-            # Wait for frames; if pipeline is stopped externally, it might error
-            try:
-                frameset = pipeline.wait_for_frames()
-            except Exception as e:
-                print("[Error waiting for frames]:", e)
-                break
-
-            color_frame = frameset.get_color_frame()
-            depth_frame = frameset.get_depth_frame()
-
-            if not color_frame or not depth_frame:
-                continue
-
-            # Compute displayed FPS color
-            now_c = time.time()
-            if last_color_time != 0:
-                dt_c = now_c - last_color_time
-                if dt_c > 0:
-                    displayed_color_fps = 1.0 / dt_c
-            last_color_time = now_c
-
-            # Compute displayed FPS depth
-            now_d = time.time()
-            if last_depth_time != 0:
-                dt_d = now_d - last_depth_time
-                if dt_d > 0:
-                    displayed_depth_fps = 1.0 / dt_d
-            last_depth_time = now_d
-
-            color_image = np.asanyarray(color_frame.get_data())
-            depth_colorized_frame = rs.colorizer().colorize(depth_frame)
-            depth_image = np.asanyarray(depth_colorized_frame.get_data())
-
-            # If metadata is toggled, gather lines & overlay
-            if metadata_toggles["rgb"]:
-                lines_rgb = gather_metadata_and_profile_info(color_frame)
-                lines_rgb.append(f"Displayed FPS: {displayed_color_fps:.1f}")
-                overlay_in_top_left(color_image, lines_rgb, text_color=(0, 255, 0))
-
-            if metadata_toggles["depth"]:
-                lines_depth = gather_metadata_and_profile_info(depth_frame)
-                lines_depth.append(f"Displayed FPS: {displayed_depth_fps:.1f}")
-                overlay_in_top_left(depth_image, lines_depth, text_color=(255, 0, 0))
-
-            _, color_buf = cv2.imencode('.jpg', color_image)
-            _, depth_buf = cv2.imencode('.jpg', depth_image)
-            color_frame_encoded = base64.b64encode(color_buf).decode('utf-8')
-            depth_frame_encoded = base64.b64encode(depth_buf).decode('utf-8')
-
-            yield {"color": color_frame_encoded, "depth": depth_frame_encoded}
-        stop_generating_frames()
-    finally:
-        stop_generating_frames()
-        
-def change_exposure():
-    color_sensor.set_option(rs.option.exposure, exposure_value["status"])
-
-
-def toggle_metadata(module):
-    if module in metadata_toggles:
-        metadata_toggles[module] = not metadata_toggles[module]
-
---------------------------------------------------
-File End
---------------------------------------------------
-
-
 C:\Users\aknani\myenv\app\camera_manager.py
 File type: .py
-from typing import Optional, Dict
+from .metadata_helpers import gather_metadata_and_profile_info
 import pyrealsense2 as rs
 import numpy as np
 import cv2
 import time
 import base64
-
-# If you are using a separate metadata_helpers file, import from there:
-from .metadata_helpers import gather_metadata_and_profile_info, overlay_in_top_left
-
+import socketio
+import traceback  # for more detailed logging
+from .config import DEFAULTS
 class CameraManager:
     """
     Manages Intel RealSense pipeline, configuration, and streaming for RGB & depth.
     """
 
     def __init__(self):
-        # Initialize pipeline and config
         self.pipeline = rs.pipeline()
         self.config = rs.config()
+        self.default_settings = DEFAULTS
 
-        # Default settings for color and depth
         self.current_settings = {
-            "color": {"width": 640, "height": 360, "fps": 30},
-            "depth": {"width": 640, "height": 360, "fps": 30},
+            "color": {
+                "width": self.default_settings["color"]["width"],
+                "height": self.default_settings["color"]["height"],
+                "fps": self.default_settings["color"]["fps"]
+            },
+            "depth": {
+                "width": self.default_settings["depth"]["width"],
+                "height": self.default_settings["depth"]["height"],
+                "fps": self.default_settings["depth"]["fps"]
+            }
         }
-        self.default_settings = {
-            "color": {"width": 640, "height": 360, "fps": 30},
-            "depth": {"width": 640, "height": 360, "fps": 30},
-        }
+
+        # Device connection status
+        self.device_connected = False
 
         # Streaming state
         self.is_streaming = False
@@ -437,56 +117,64 @@ class CameraManager:
         self.metadata_toggles = {"rgb": False, "depth": False}
 
         # Exposure values
-        self.exposure_value_rgb = 300
-        self.exposure_value_depth = 300
+        self.exposure_value_rgb = self.default_settings["color"]["exposure"]
+        self.exposure_value_depth = self.default_settings["depth"]["exposure"]
 
-        # Track last frame times for displayed FPS
+        # FPS tracking
         self.last_color_time = 0.0
         self.last_depth_time = 0.0
         self.displayed_color_fps = 0.0
         self.displayed_depth_fps = 0.0
 
-        # Keep references to sensors
+        # Sensor references
         self.color_sensor = None
         self.depth_sensor = None
-        
+    def get_device_info(self):
+        """
+        Returns basic info about the connected RealSense device.
+        If pipeline isn't running, attempt to start it so we can query device info.
+        """
+        if not self.is_streaming:
+            try:
+                self.configure_pipeline()
+            except Exception as e:
+                print("[CameraManager] Could not start pipeline for get_device_info:", e)
+                raise e  # or handle differently
 
-
+        try:
+            profile = self.pipeline.get_active_profile()
+            device = profile.get_device()
+            info = {
+                "name": device.get_info(rs.camera_info.name),
+                "serial_number": device.get_info(rs.camera_info.serial_number),
+                "firmware_version": device.get_info(rs.camera_info.firmware_version),
+                "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
+            }
+            self.device_connected = True
+            return info
+        except RuntimeError as e:
+            print("[CameraManager] get_active_profile() error:", e)
+            raise
 
     def reset_to_default(self):
-        """
-        Stop the pipeline and reset all relevant fields to default values.
-        """
+        """Full hardware-aware reset"""
         self.stop_stream()
-
-        # Restore default resolution/fps
-        self.current_settings = {
-            "color": dict(self.default_settings["color"]),
-            "depth": dict(self.default_settings["depth"]),
-        }
-
-        # Reset toggles
-        self.metadata_toggles = {"rgb": False, "depth": False}
-
-        # Reset exposure
-        self.exposure_value_rgb = 300
-        self.exposure_value_depth = 300
-        # At this point, we do not start the pipeline automatically because
-        # we might only start streaming once a new client connects
-        print("[CameraManager] Reset to default settings.")
+        try:
+            # Hardware-level reset
+            ctx = rs.context()
+            if ctx.query_devices().size() > 0:
+                ctx.remove_device(ctx.query_devices()[0].get_info(rs.camera_info.serial_number))
+        except:
+            pass
         
-        
-        
-        
-        
+        # Reinitialize fresh
+        self.__init__()
+        print("[CameraManager] Full hardware reset complete")
+    
     def configure_pipeline(self):
-        """
-        Applies the current_settings to self.config, restarts the pipeline.
-        """
         if self.is_streaming:
             self.stop_stream()
 
-        # Clear previous config
         self.config.disable_all_streams()
 
         # Enable color stream
@@ -503,17 +191,21 @@ class CameraManager:
             d["width"], d["height"], rs.format.z16, d["fps"]
         )
 
-        # Start pipeline
-        profile = self.pipeline.start(self.config)
-        self.is_streaming = True
-        print("[CameraManager] Pipeline started with:", self.current_settings)
-
-        # Cache sensor references
-        self._cache_sensors(profile)
+        try:
+            profile = self.pipeline.start(self.config)
+            self.is_streaming = True
+            self.device_connected = True
+            print("[CameraManager] Pipeline started with:", self.current_settings)
+            self._cache_sensors(profile)
+        except Exception as e:
+            self.device_connected = False
+            self.is_streaming = False
+            print(f"[CameraManager] Failed to start pipeline: {e}")
+            raise
 
     def _cache_sensors(self, profile: rs.pipeline_profile):
         """
-        Internal method to store references to RGB and Depth sensors once pipeline is started.
+        Store references to RGB and Depth sensors once pipeline is started.
         """
         device = profile.get_device()
         sensors = device.query_sensors()
@@ -524,14 +216,15 @@ class CameraManager:
             elif "depth" in name:
                 self.depth_sensor = sensor
 
-        # Optionally disable auto-exposure for color
+        # Disable auto-exposure for color
         if self.color_sensor is not None:
             self.color_sensor.set_option(rs.option.enable_auto_exposure, 0)
             self.color_sensor.set_option(rs.option.exposure, self.exposure_value_rgb)
 
+        # Disable auto-exposure for depth
         if self.depth_sensor is not None:
-             self.depth_sensor.set_option(rs.option.enable_auto_exposure, 0)
-             self.depth_sensor.set_option(rs.option.exposure, self.exposure_value_depth)
+            self.depth_sensor.set_option(rs.option.enable_auto_exposure, 0)
+            self.depth_sensor.set_option(rs.option.exposure, self.exposure_value_depth)
 
     def stop_stream(self):
         """
@@ -542,7 +235,7 @@ class CameraManager:
             self.pipeline.stop()
             print("[CameraManager] Pipeline stopped.")
         except Exception:
-            pass  # In case it's already stopped
+            pass  # Already stopped
 
     def update_resolution_and_fps(self, module: str, width: int, height: int, fps: int):
         """
@@ -555,16 +248,13 @@ class CameraManager:
         else:
             raise ValueError("Unknown module name")
 
-        # Reconfigure pipeline to apply new settings
         self.configure_pipeline()
 
-    def toggle_metadata(self, module: str):
-        """
-        Enable/disable metadata overlay for the specified module (rgb or depth).
-        """
+    def set_metadata(self, module: str, state: bool):
+        """Set metadata overlay state for specified module"""
         if module in self.metadata_toggles:
-            self.metadata_toggles[module] = not self.metadata_toggles[module]
-        print(f"[CameraManager] Metadata for {module} set to {self.metadata_toggles[module]}")
+            self.metadata_toggles[module] = state
+        print(f"[CameraManager] Metadata for {module} set to {state}")
 
     def set_exposure(self, module: str, value: int):
         """
@@ -582,87 +272,118 @@ class CameraManager:
             print(f"[CameraManager] Invalid module or sensor not found for module={module}")
 
     def generate_frames(self):
-        """
-        Generator that yields encoded frames (color, depth) in real time.
-        Suitable for passing to a WebSocket or Socket.IO 'emit' loop.
-        """
-        if not self.is_streaming:
-            self.configure_pipeline()
+            """
+            Generator that yields frames in real time. If the camera
+            accidentally disconnects (e.g., cable pulled), we detect it
+            and emit server->client events via Socket.IO.
+            """
+            # Ensure streaming is started
+            if not self.is_streaming:
+                self.configure_pipeline()
 
-        try:
-            while self.is_streaming:
-                frameset = self.pipeline.wait_for_frames()
+            try:
+                while self.is_streaming:
+                    try:
+                        frameset = self.pipeline.wait_for_frames()
+                    except RuntimeError as e:
+                        # This is raised if frames no longer arrive; camera offline?
+                        if "Frame didn't arrive within 5000" in str(e):
+                            print("[CameraManager] Physical camera disconnection detected!")
+                            self.device_connected = False
+                            # Stop streaming so we don't keep spamming errors
+                            self.stop_stream()
 
-                color_frame = frameset.get_color_frame()
-                depth_frame = frameset.get_depth_frame()
-                if not color_frame or not depth_frame:
-                    continue
+                            # Emit a status event with reason
+                            socketio.emit('device_status', {
+                                'connected': False,
+                                'reason': 'camera_disconnected'
+                            })
+                            break
+                        else:
+                            print("[CameraManager] Other runtime error while waiting for frames:")
+                            traceback.print_exc()
+                            raise e
 
-                # Compute displayed FPS for color
-                now_c = time.time()
-                if self.last_color_time != 0:
-                    dt_c = now_c - self.last_color_time
-                    if dt_c > 0:
-                        self.displayed_color_fps = 1.0 / dt_c
-                self.last_color_time = now_c
+                    color_frame = frameset.get_color_frame()
+                    depth_frame = frameset.get_depth_frame()
+                    if not color_frame or not depth_frame:
+                        continue
 
-                # Compute displayed FPS for depth
-                now_d = time.time()
-                if self.last_depth_time != 0:
-                    dt_d = now_d - self.last_depth_time
-                    if dt_d > 0:
-                        self.displayed_depth_fps = 1.0 / dt_d
-                self.last_depth_time = now_d
+                    # Compute displayed FPS (Color)
+                    now_c = time.time()
+                    if self.last_color_time != 0:
+                        dt_c = now_c - self.last_color_time
+                        if dt_c > 0:
+                            self.displayed_color_fps = 1.0 / dt_c
+                    self.last_color_time = now_c
 
-                # Convert frames to numpy
-                color_image = np.asanyarray(color_frame.get_data())
-                depth_colorized_frame = rs.colorizer().colorize(depth_frame)
-                depth_image = np.asanyarray(depth_colorized_frame.get_data())
+                    # Compute displayed FPS (Depth)
+                    now_d = time.time()
+                    if self.last_depth_time != 0:
+                        dt_d = now_d - self.last_depth_time
+                        if dt_d > 0:
+                            self.displayed_depth_fps = 1.0 / dt_d
+                    self.last_depth_time = now_d
 
-                # If metadata toggled on, gather info and overlay
-                if self.metadata_toggles["rgb"]:
-                    lines_rgb = gather_metadata_and_profile_info(color_frame)
-                    lines_rgb.append(f"Displayed FPS: {self.displayed_color_fps:.1f}")
-                    overlay_in_top_left(color_image, lines_rgb, text_color=(0, 255, 0))
+                    # Convert frames to JPG+base64
+                    color_image = np.asanyarray(color_frame.get_data())
+                    depth_image = np.asanyarray(rs.colorizer().colorize(depth_frame).get_data())
 
-                if self.metadata_toggles["depth"]:
-                    lines_depth = gather_metadata_and_profile_info(depth_frame)
-                    lines_depth.append(f"Displayed FPS: {self.displayed_depth_fps:.1f}")
-                    overlay_in_top_left(depth_image, lines_depth, text_color=(255, 0, 0))
+                    _, color_buf = cv2.imencode(".jpg", color_image)
+                    _, depth_buf = cv2.imencode(".jpg", depth_image)
+                    color_encoded = base64.b64encode(color_buf).decode("utf-8")
+                    depth_encoded = base64.b64encode(depth_buf).decode("utf-8")
 
-                # Encode images as base64
-                _, color_buf = cv2.imencode(".jpg", color_image)
-                _, depth_buf = cv2.imencode(".jpg", depth_image)
-                color_encoded = base64.b64encode(color_buf).decode("utf-8")
-                depth_encoded = base64.b64encode(depth_buf).decode("utf-8")
+                    # Gather metadata if toggled
+                    lines_rgb = []
+                    lines_depth = []
+                    if self.metadata_toggles["rgb"]:
+                        lines_rgb = gather_metadata_and_profile_info(color_frame)
+                        lines_rgb.append(f"Displayed FPS: {self.displayed_color_fps:.1f}")
+                    if self.metadata_toggles["depth"]:
+                        lines_depth = gather_metadata_and_profile_info(depth_frame)
+                        lines_depth.append(f"Displayed FPS: {self.displayed_depth_fps:.1f}")
 
-                yield {"color": color_encoded, "depth": depth_encoded}
+                    yield {
+                        "color": color_encoded,
+                        "depth": depth_encoded,
+                        "metadata": {
+                            "rgb": lines_rgb,
+                            "depth": lines_depth
+                        }
+                    }
 
-        except Exception as e:
-            print("[CameraManager] Error in generate_frames():", e)
-        finally:
-            self.stop_stream()
+            except Exception as e:
+                print("[CameraManager] Exception during streaming:")
+                traceback.print_exc()
+                self.device_connected = False
+                self.stop_stream()
+            finally:
+                self.stop_stream()
 
 
 
-    def get_device_info(self):
-        """
-        Returns basic info about the connected RealSense device.
-        If pipeline isn't running, it starts it so we can query device info.
-        """
-        if not self.is_streaming:
-            self.configure_pipeline()
+--------------------------------------------------
+File End
+--------------------------------------------------
 
-        profile = self.pipeline.get_active_profile()
-        device = profile.get_device()
 
-        info = {
-            "name": device.get_info(rs.camera_info.name),
-            "serial_number": device.get_info(rs.camera_info.serial_number),
-            "firmware_version": device.get_info(rs.camera_info.firmware_version),
-            "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
-        }
-        return info
+C:\Users\aknani\myenv\app\config.py
+File type: .py
+DEFAULTS = {
+    "color": {
+        "width": 640,
+        "height": 360,
+        "fps": 30,
+        "exposure": 300
+    },
+    "depth": {
+        "width": 640,
+        "height": 360,
+        "fps": 30,
+        "exposure": 300
+    }
+}
 
 --------------------------------------------------
 File End
@@ -672,7 +393,6 @@ File End
 C:\Users\aknani\myenv\app\metadata_helpers.py
 File type: .py
 import pyrealsense2 as rs
-import cv2
 
 def gather_metadata_and_profile_info(frame):
     lines = []
@@ -696,40 +416,6 @@ def gather_metadata_and_profile_info(frame):
 
     return lines
 
-def overlay_in_top_left(image, lines, text_color=(0, 255, 0)):
-    if not lines:
-        return
-
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.6
-    thickness = 2
-    line_height = 25
-    margin = 5
-
-    # Calculate bounding box
-    max_width = 0
-    for line in lines:
-        text_size, _ = cv2.getTextSize(line, font, font_scale, thickness)
-        if text_size[0] > max_width:
-            max_width = text_size[0]
-
-    box_width = max_width + (margin * 2)
-    box_height = (line_height * len(lines)) + (margin * 2)
-
-    x = 5
-    y = 10
-
-    # Clamping to fit on screen
-    if x + box_width > image.shape[1]:
-        x = max(0, image.shape[1] - box_width - 10)
-    if y + box_height > image.shape[0]:
-        y = max(0, image.shape[0] - box_height - 10)
-
-    text_y = y + margin + line_height - 5
-    for line in lines:
-        cv2.putText(image, line, (x + margin, text_y), font, font_scale, text_color, thickness)
-        text_y += line_height
-
 
 --------------------------------------------------
 File End
@@ -740,32 +426,48 @@ C:\Users\aknani\myenv\app\routes.py
 File type: .py
 from flask import render_template, request, jsonify
 from app import socketio
-# Import the CameraManager
 from .camera_manager import CameraManager
+from .config import DEFAULTS
+
+streaming_active = False
 
 def init_routes(app):
-    # We assume an instance of CameraManager is attached to the app:
-    # app.camera_manager = CameraManager() (in __init__.py)
-
     @app.route('/')
     def index():
         return render_template('index.html')
-
+    @app.route('/api/defaults', methods=['GET'])
+    def get_defaults():
+        """
+        Returns the default camera settings as JSON.
+        """
+        return jsonify(DEFAULTS), 200
+        
+    @app.route('/api/hard_reset', methods=['POST'])
+    def hard_reset():
+        global streaming_active
+        try:
+            streaming_active = False  # Force stop streaming
+            app.camera_manager.reset_to_default()
+            app.camera_manager.configure_pipeline()
+            return jsonify({"message": "Full system reset complete"}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+            
     @app.route('/api/configure', methods=['POST'])
     def configure():
         """
-        Example request body:
+        Request body:
         {
-          "module": "rgb",
+          "module": "rgb" or "depth",
           "resolution": "1280x720",
-          "frame_rate": 15
+          "frame_rate": "30"
         }
         """
         try:
             data = request.json
             module = data.get('module')
-            resolution = data.get('resolution')  # e.g. "1280x720"
-            frame_rate = data.get('frame_rate')  # e.g. 15
+            resolution = data.get('resolution')  
+            frame_rate = data.get('frame_rate') 
 
             if not (module and resolution and frame_rate):
                 return jsonify({"error": "Missing data"}), 400
@@ -779,22 +481,28 @@ def init_routes(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    @app.route('/api/toggle_metadata', methods=['POST'])
-    def toggle_metadata_endpoint():
+# In routes.py - Replace toggle_metadata_endpoint
+    @app.route('/api/set_metadata', methods=['POST'])
+    def set_metadata():
         data = request.json
         module = data.get('module')
-        if module not in ['rgb', 'depth']:
-            return jsonify({"error": "Invalid module"}), 400
-
-        app.camera_manager.toggle_metadata(module)
-        return jsonify({"message": f"{module.capitalize()} metadata toggled"})
+        state = data.get('state')
+        
+        if module not in ['rgb', 'depth'] or not isinstance(state, bool):
+            return jsonify({"error": "Invalid request"}), 400
+            
+        app.camera_manager.set_metadata(module, state)
+        return jsonify({
+            "message": f"{module} metadata {'enabled' if state else 'disabled'}",
+            "state": state
+        })
 
     @app.route('/api/exposure', methods=['POST'])
     def update_exposure():
         """
-        Example request body:
+        Request body:
         {
-          "module": "rgb",
+          "module": "rgb" or "depth",
           "exposure": 8500
         }
         """
@@ -804,7 +512,6 @@ def init_routes(app):
             exposure_value = int(data.get('exposure'))
 
             app.camera_manager.set_exposure(module, exposure_value)
-
             return jsonify({
                 "message": f"{module.capitalize()} exposure updated",
                 "exposure": exposure_value
@@ -817,37 +524,72 @@ def init_routes(app):
         app.camera_manager.stop_stream()
         return jsonify({"message": "Streaming stopped"})
 
-
-            
     @app.route('/api/camera_info', methods=['GET'])
     def camera_info():
-        """
-        Returns device info from the active RealSense camera.
-        """
         try:
             info = app.camera_manager.get_device_info()
-            print(info)
             return jsonify(info), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-        
-        
-        
-        #############socket io#############
+
+    #################### Socket.IO ####################
     @socketio.on('connect')
     def handle_connect():
-        print('Client connected')
+            """Only handles connection - doesn't auto-start stream"""
+            print('Client connected')
+            try:
+                # Verify camera presence
+                app.camera_manager.get_device_info()
+                socketio.emit('device_status', {'connected': True})
+            except RuntimeError as e:
+                print(f"Camera error: {str(e)}")
+                socketio.emit('device_status', {'connected': False, 'reason': 'camera_disconnected'})
+
+    # Update disconnect handler
     @socketio.on('disconnect')
     def handle_disconnect():
-        print('Client disconnected; resetting camera settings to defaults.')
+        global streaming_active
+        streaming_active = False
         app.camera_manager.reset_to_default()
+        print("Full reset on client disconnect")
         
     @socketio.on('start_stream')
-    def start_stream():
+    def handle_start_stream():
+            """Explicit stream start from client"""
+            global streaming_active
+            if not streaming_active:
+                streaming_active = True
+                try:
+                    # Ensure pipeline is configured
+                    if not app.camera_manager.is_streaming:
+                        app.camera_manager.configure_pipeline()
+                    # Start background stream
+                    socketio.start_background_task(stream_frames)
+                except Exception as e:
+                    socketio.emit('device_status', {'connected': False, 'reason': str(e)})
 
-        print("Received start_stream event from client.")
-        for frame in app.camera_manager.generate_frames():
-            socketio.emit('video_frame', frame)
+    def stream_frames():
+        global streaming_active
+        try:
+            for frame in app.camera_manager.generate_frames():
+                if not streaming_active:
+                    break
+                socketio.emit('video_frame', frame)
+        except Exception as e:
+            print(f"Streaming error: {str(e)}")
+        finally:
+            streaming_active = False
+            app.camera_manager.stop_stream()
+            
+    @socketio.on('stop_stream')
+    def handle_stop_stream():
+        global streaming_active
+        if streaming_active:
+            streaming_active = False
+            print("[server] Stopping stream for client.")
+            # This will break the generator loop in stream_frames
+            app.camera_manager.stop_stream()
+
 
 --------------------------------------------------
 File End
@@ -927,7 +669,9 @@ File type: .html
 --------------------------------------------------
 File End
 --------------------------------------------------
+server ends here!
 
+here is my client:
 Folder Structure
 --------------------------------------------------
 src/
@@ -942,6 +686,8 @@ src/
         app.component.ts
         app.module.ts
         components/
+            assets/
+                waveform.svg
             cam-streams/
                 cam-streams.component.html
                 cam-streams.component.scss
@@ -952,6 +698,11 @@ src/
                 cam-viewer.component.scss
                 cam-viewer.component.spec.ts
                 cam-viewer.component.ts
+            connection-status/
+                connection-status.component.html
+                connection-status.component.scss
+                connection-status.component.spec.ts
+                connection-status.component.ts
             sidebar-controls/
                 sidebar-controls.component.html
                 sidebar-controls.component.scss
@@ -1015,7 +766,7 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\styles.scss
 File type: .scss
-@import '@angular/material/prebuilt-themes/indigo-pink.css';
+/* File: src/styles.scss */
 @import './app/styles/variables';
 
 html, body, app-root {
@@ -1027,17 +778,24 @@ html, body, app-root {
   font-family: 'Roboto', sans-serif;
 }
 
-/* Force the mat-sidenav-container to also fill available height */
-.mat-sidenav-container,
-.mat-sidenav-content {
-  height: 100%;
-  background-color: $dark-background;
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background-color: $darkest-background;
 }
-
-
-/* For a smoother control-panel animation */
-.module-toggle .control-panel {
-  transition: all 0.3s ease-in-out;
+::-webkit-scrollbar-thumb {
+  background-color: #2f2f2f;
+  border-radius: 3px;
+  border: 1px solid $darkest-background;
+  &:hover {
+    background-color: #3f3f3f;
+  }
+}
+/* Firefox scrollbar support */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2f2f2f $darkest-background;
 }
 
 
@@ -1067,17 +825,8 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\app.component.html
 File type: .html
-<header class="app-header">
-    <img src="../assets/realsense-logo.png" alt="Intel RealSense Logo" class="logo" />
-    <div class ="title-container" >
-        <h1>Intel® RealSense WebViewer</h1>
-    </div>
-  </header>
-  
-  <main>
-    <app-cam-viewer></app-cam-viewer>
-  </main>
-  
+<app-cam-viewer></app-cam-viewer>
+
 
 --------------------------------------------------
 File End
@@ -1086,33 +835,16 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\app.component.scss
 File type: .scss
-.app-header {
-    display: flex;
-    align-items: center;
-    background-color: #000000;
-    padding: 0.5rem 1rem;
-  
-    .logo {
-      height: 40px;
-      margin-right: 1rem;
-    }
-  
-    h1 {
-      color: #009fde;
-      font-size: 1.5rem;
-      margin: 0;
-      
-    }
-  }
-  .title-container {
-    padding: 10px; /* Adds some spacing around the title */
-    z-index: 1000; /* Ensures it stays above other elements */
-  }
-  /* main area occupies the rest of the screen */
-  main {
-    height: calc(100vh - 60px);
-  }
-  
+@import './styles/variables';
+/* app.component.scss */
+:host {
+  display: block;
+  height: 100vh;
+}
+
+.app-main {
+  height: 100vh;
+}
 
 --------------------------------------------------
 File End
@@ -1204,10 +936,10 @@ import { MatButtonModule } from '@angular/material/button';
 import { provideHttpClient } from '@angular/common/http';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 
-// Import your components
 import { CamViewerComponent } from './components/cam-viewer/cam-viewer.component';
 import { SidebarControlsComponent } from './components/sidebar-controls/sidebar-controls.component';
 import { CamStreamsComponent } from './components/cam-streams/cam-streams.component';
+import { ConnectionStatusComponent } from './components/connection-status/connection-status.component';
 
 @NgModule({
   // Put all non-standalone components here
@@ -1228,7 +960,8 @@ import { CamStreamsComponent } from './components/cam-streams/cam-streams.compon
     MatInputModule,
     MatSelectModule,
     MatButtonModule,
-    CamViewerComponent
+    CamViewerComponent,
+    ConnectionStatusComponent
     ],
   providers: [
     provideHttpClient()
@@ -1242,38 +975,79 @@ File End
 --------------------------------------------------
 
 
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\assets\waveform.svg
+File type: .svg
+
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-streams\cam-streams.component.html
 File type: .html
-<div
-  class="streaming-container"
-  [class.single-stream]="(showDepth && !showRGB) || (!showDepth && showRGB)"
-  [class.double-stream]="showDepth && showRGB"
->
-  <!-- Show nothing-to-stream placeholder if both toggles off -->
-  <div *ngIf="!showDepth && !showRGB" class="placeholder-text">
-    Nothing to stream!
-  </div>
+<!-- File: cam-streams.component.html -->
+<div class="streaming-area">
+  <!-- Main container controlling single vs double stream layout -->
+  <div class="streaming-container"
+       [class.single-stream]="(showDepth && !showRGB) || (!showDepth && showRGB)"
+       [class.double-stream]="showDepth && showRGB">
+    
+    <!-- If nothing is toggled, show placeholder -->
+    <div *ngIf="!showDepth && !showRGB" class="placeholder-text">
+      Nothing to stream!
+    </div>
 
-  <!-- Depth Stream -->
-  <div *ngIf="showDepth" class="stream-box">
-    <h3 class="stream-title">Depth Stream</h3>
-    <ng-container *ngIf="depthImageUrl; else noDepthText">
-      <img [src]="depthImageUrl" alt="Depth Stream" />
-    </ng-container>
-    <ng-template #noDepthText>
-      <p>No Depth Image Feed</p>
-    </ng-template>
-  </div>
+    <!-- Depth Stream -->
+    <div *ngIf="showDepth" class="stream-box">
+      <h3 class="stream-title">Depth Stream</h3>
+      <div class="img-container">
+        <ng-container *ngIf="depthImageUrl; else noDepthStream">
+          <div class="stream-loading" *ngIf="!depthImageLoaded">
+            <mat-spinner diameter="32"></mat-spinner>
+          </div>
+          <img
+          [src]="depthImageUrl"
+          alt="Depth Stream"
+          (load)="onDepthImgLoad()"  
+        />      
+            <div class="metadata-overlay" *ngIf="depthMetadataLines.length > 0">
+            <ul>
+              <li *ngFor="let line of depthMetadataLines">{{ line }}</li>
+            </ul>
+          </div>
+        </ng-container>
+        <ng-template #noDepthStream>
+          <div class="no-stream-center">No depth stream available</div>
+        </ng-template>
+      </div>
+    </div>
 
-  <!-- RGB Stream -->
-  <div *ngIf="showRGB" class="stream-box">
-    <h3 class="stream-title">RGB Stream</h3>
-    <ng-container *ngIf="colorImageUrl; else noRgbText">
-      <img [src]="colorImageUrl" alt="RGB Stream" />
-    </ng-container>
-    <ng-template #noRgbText>
-      <p>No RGB Image Feed</p>
-    </ng-template>
+    <!-- RGB Stream -->
+    <div *ngIf="showRGB" class="stream-box">
+      <h3 class="stream-title">RGB Stream</h3>
+      <div class="img-container">
+        <ng-container *ngIf="colorImageUrl; else noRgbStream">
+          <div class="stream-loading" *ngIf="!colorImageLoaded">
+            <mat-spinner diameter="32"></mat-spinner>
+          </div>
+          <img
+          [src]="colorImageUrl"
+          alt="RGB Stream"
+          (load)="onColorImgLoad()"  
+        />    
+            <div class="metadata-overlay" *ngIf="rgbMetadataLines.length > 0">
+            <ul>
+              <li *ngFor="let line of rgbMetadataLines">{{ line }}</li>
+            </ul>
+          </div>
+        </ng-container>
+        <ng-template #noRgbStream>
+          <div class="no-stream-center">No RGB stream available</div>
+        </ng-template>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -1286,63 +1060,401 @@ File End
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-streams\cam-streams.component.scss
 File type: .scss
 @import '../../styles/_variables.scss';
+.streaming-area {
+  width: 100%;
+  height: calc(100vh - 64px); // Account for header
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  position: relative;
+  background: linear-gradient(45deg, $darkest-background, darken($darkest-background, 2%));
+}
 
 .streaming-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background-color: $dark-background;
-  color: $primary-text;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  /* If only one stream toggled, center it in single-stream layout */
+  position: relative; // Add this for absolute positioning context
+  height: 100%; // Ensure full height
+ // When empty state is shown
+ &:has(.placeholder-text) {
+  border: 1px solid rgba($realsense-blue, 0.1);
+  background-image: 
+    linear-gradient(
+      45deg,
+      rgba($realsense-blue, 0.03) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgba($realsense-blue, 0.03) 75%
+    ),
+    linear-gradient(
+      45deg,
+      rgba($realsense-blue, 0.03) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgba($realsense-blue, 0.03) 75%
+    );
+  background-size: 40px 40px;
+  background-position: 0 0, 20px 20px;
+}
+  
   &.single-stream {
-    flex-direction: column;
-  }
-
-  /* If two toggles are on, show them side by side */
-  &.double-stream {
-    flex-direction: row;
-    justify-content: space-evenly;
-    align-items: center;
-  }
-
-  .placeholder-text {
-    font-size: 2rem;
-    font-weight: bold;
-    color: $secondary-text;
-    text-align: center;
-  }
-
-  .stream-box {
-    border: 1px solid #444;
-    background-color: #2f2f2f;
-    margin: 1rem;
-    padding: 1rem;
-    border-radius: 6px;
-
-    .stream-title {
-      color: $realsense-blue;
-      text-align: center;
-      margin-bottom: 0.5rem;
-    }
-
-    img {
+    .stream-box {
+      flex: 1 1 60%;
       max-width: 90%;
-      border: 1px solid #555;
-      margin-bottom: 1rem;
+      height: 90%;
     }
-
-    p {
-      text-align: center;
-      color: $secondary-text;
+  }
+  
+  &.double-stream {
+    .stream-box {
+      height: 90%;
+      max-width: calc(50% - 1rem);
     }
   }
 }
 
+.stream-box {
+  position: relative;
+  overflow: hidden;
+  border: 2px solid rgba($realsense-blue, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  &:hover {
+    border-color: rgba($realsense-blue, 0.3);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  }
+
+  .stream-title {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 2;
+    background: rgba($darkest-background, 0.7);
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    backdrop-filter: blur(4px);
+    color: $primary-text
+  }
+}
+
+.img-container {
+  width: 100%;
+  height: 100%;
+  background: $darkest-background !important;
+  
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: crisp-edges;
+  }
+}
+
+.placeholder-text {
+  font-size: 2.5rem; // Increased from 2rem
+  font-weight: 300; // Lighter weight for modern look
+  color: rgba($primary-text, 0.7); // Use primary text with opacity
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  gap: 1.5rem;
+  animation: fadeIn 0.3s ease-out;
+  
+  // Add an icon/emoji above the text
+  &:before {
+    content: '🎥';
+    font-size: 4rem;
+    filter: grayscale(30%);
+    opacity: 0.6;
+  }
+
+  // Optional animation
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+.metadata-overlay {
+  position: absolute;
+  bottom: 1rem;
+  left: 1rem;
+  background: rgba($darkest-background, 0.8) !important;
+  backdrop-filter: blur(4px);
+  padding: 0.8rem 1rem !important;
+  border-radius: 6px;
+  max-width: 300px;
+  font-family: 'Roboto Mono', monospace;
+  
+  ul {
+    li {
+      font-size: 0.75rem;
+      line-height: 1.4;
+      padding: 2px 0;
+      color: lighten($secondary-text, 10%);
+      
+      &:not(:last-child) {
+        border-bottom: 1px solid rgba($realsense-blue, 0.1);
+      }
+    }
+  }
+}
+
+@media (max-width: 1200px) {
+  .streaming-container {
+    &.double-stream {
+      flex-direction: column;
+      
+      .stream-box {
+        max-width: 100%;
+        height: 48%;
+      }
+    }
+  }
+  
+  .metadata-overlay {
+    max-width: 200px;
+    font-size: 0.7rem;
+  }
+}
+.stream-loading {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba($darkest-background, 0.8);
+  z-index: 2;
+}
+
+
+.no-stream-center {
+  color: rgba($primary-text, 0.6) !important;
+  font-size: 1.4rem;
+  font-weight: 300;
+  padding: 2rem;
+  align-items: center;
+  &:before {
+    content: '';
+    align-items: center;
+    font-size: 2.5rem;
+    display: block;
+    margin-bottom: 1rem;
+    opacity: 0.7;
+  }
+}
+
+
+.streaming-container {
+  &.double-stream {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+    padding: 1.5rem;
+    
+    .stream-box {
+      max-width: 100%;
+      height: 100%;
+      margin: 0;
+      aspect-ratio: 16/9; // Maintain camera aspect ratio
+      
+      .img-container {
+        height: 100%;
+        
+        img {
+          object-fit: cover; // Fill container while maintaining aspect ratio
+        }
+      }
+    }
+  }
+}
+.stream-box {
+  border: 1px solid rgba($realsense-blue, 0.15);
+  background: linear-gradient(145deg, #1a1a1a, #151515);
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 
+      0 6px 16px rgba(0, 159, 222, 0.15),
+      0 4px 12px rgba(0, 0, 0, 0.25);
+  }
+}
+
+.img-container {
+  position: relative;
+  aspect-ratio: 16/9;
+  background: #000 !important;
+  
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+}
+
+
+
+.placeholder-text {
+  font-size: 1.5rem;
+  color: rgba($primary-text, 0.4);
+  position: relative;
+  
+  &:before {
+    content: '';
+    display: block;
+    width: 80px;
+    height: 80px;
+    background: url('../assets/waveform.svg') no-repeat center;
+    opacity: 0.2;
+    margin-bottom: 1rem;
+  }
+  
+  &:after {
+    content: 'Select streams from the control panel';
+    display: block;
+    font-size: 1rem;
+    color: rgba($primary-text, 0.3);
+    margin-top: 0.5rem;
+  }
+}
+
+.stream-status {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  gap: 0.5rem;
+  
+  .status-led {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgba($primary-text, 0.2);
+    transition: all 0.3s ease;
+    
+    &.active {
+      background: $realsense-blue;
+      box-shadow: 0 0 8px rgba($realsense-blue, 0.4);
+    }
+  }
+}
+
+
+.stream-box {
+  transition: 
+    opacity 0.3s ease,
+    transform 0.3s ease,
+    border-color 0.3s ease;
+  
+  &:not(.active) {
+    opacity: 0.5;
+    filter: grayscale(50%);
+  }
+}
+
+
+.stream-status-container {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  z-index: 1000;
+}
+
+
+/* In cam-streams.component.scss */
+.streaming-container {
+  &.double-stream {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    height: 100%;
+    padding: 1.5rem;
+    
+    .stream-box {
+      margin: 0;
+      height: 100%;
+      aspect-ratio: 16/9;
+      
+      .img-container {
+        height: 100%;
+        
+        img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+        }
+      }
+    }
+  }
+}
+
+.metadata-overlay {
+  position: absolute;
+  bottom: 1rem;
+  left: 1rem;
+  background: rgba($darkest-background, 0.9) !important;
+  color: $primary-text !important;
+  padding: 0.8rem 1rem;
+  border-radius: 6px;
+  border: 1px solid rgba($realsense-blue, 0.3);
+  max-width: 300px;
+  backdrop-filter: blur(4px);
+  
+  ul {
+    margin: 0;
+    padding: 0;
+    
+    li {
+      font-size: 0.8rem;
+      line-height: 1.4;
+      padding: 0.2rem 0;
+      list-style-type: none;
+      
+      &:not(:last-child) {
+        border-bottom: 1px solid rgba($realsense-blue, 0.2);
+      }
+    }
+  }
+
+}
+
+
+/* In cam-streams.component.scss */
+.stream-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba($darkest-background, 0.6);
+  backdrop-filter: blur(2px);
+  z-index: 1;
+  
+  mat-spinner {
+    circle {
+      stroke: $realsense-blue;
+    }
+  }
+}
 
 --------------------------------------------------
 File End
@@ -1384,7 +1496,8 @@ File End
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-streams\cam-streams.component.ts
 File type: .ts
 import { CommonModule } from '@angular/common';
-import { Component, Input } from '@angular/core';
+import { Component, Input, SimpleChanges } from '@angular/core';
+import { MatSpinner } from '@angular/material/progress-spinner';
 
 @Component({
   selector: 'app-cam-streams',
@@ -1393,7 +1506,7 @@ import { Component, Input } from '@angular/core';
   standalone: true,
   imports: [
     CommonModule,
-    // plus anything else you need
+    MatSpinner
   ]
 })
 export class CamStreamsComponent {
@@ -1402,6 +1515,28 @@ export class CamStreamsComponent {
 
   @Input() depthImageUrl: string | null = null;
   @Input() colorImageUrl: string | null = null;
+  @Input() depthMetadataLines: string[] = [];
+  @Input() rgbMetadataLines: string[] = [];
+
+  depthImageLoaded = false;
+  colorImageLoaded = false;
+
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes['depthImageUrl']) {
+      this.depthImageLoaded = false;
+    }
+    if (changes['colorImageUrl']) {
+      this.colorImageLoaded = false;
+    }
+  }
+
+  onDepthImgLoad() {
+    this.depthImageLoaded = true;
+  }
+
+  onColorImgLoad() {
+    this.colorImageLoaded = true;
+  }
 }
 
 
@@ -1412,37 +1547,62 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-viewer\cam-viewer.component.html
 File type: .html
+<!-- File: cam-viewer.component.html -->
+<app-connection-status></app-connection-status>
 <mat-sidenav-container class="viewer-container">
-  <!-- Sidebar -->
-  <mat-sidenav mode="side" opened>
-    <app-sidebar-controls
-      (depthToggleChange)="onDepthToggle($event)"
-      (rgbToggleChange)="onRgbToggle($event)"
-      (depthResolutionChange)="updateDepthConfig($event)"
-      (rgbResolutionChange)="updateRGBConfig($event)"
-      (depthExposureChange)="updateDepthExposure($event)"
-      (rgbExposureChange)="updateRGBExposure($event)"
-      (depthMetadataToggle)="onDepthMetadataToggle($event)"
-      (rgbMetadataToggle)="onRgbMetadataToggle($event)"
-    >
-    </app-sidebar-controls>
+  <mat-sidenav #sidenav
+               mode="side"
+               position="start"
+               [(opened)]="sidePanelOpen"
+               class="control-sidenav">
+
+    <!-- Sidebar Header -->
+    <div class="sidebar-header">
+      <img src="../assets/realsense-logo.png" alt="Intel RealSense" class="sidebar-logo">
+    </div>
+
+    <!-- Sidebar Content -->
+    <div class="sidebar-content">
+      <app-sidebar-controls
+        (depthToggleChange)="onDepthToggle($event)"
+        (rgbToggleChange)="onRgbToggle($event)"
+        (depthResolutionChange)="updateDepthConfig($event)"
+        (rgbResolutionChange)="updateRGBConfig($event)"
+        (depthExposureChange)="updateDepthExposure($event)"
+        (rgbExposureChange)="updateRGBExposure($event)"
+        (depthMetadataToggle)="onDepthMetadataToggle($event)"
+        (rgbMetadataToggle)="onRgbMetadataToggle($event)">
+      </app-sidebar-controls>
+    </div>
   </mat-sidenav>
 
-  <!-- Streaming Container -->
+  <!-- Main content area -->
   <mat-sidenav-content>
-    <app-cam-streams
-      [showDepth]="showDepth"
-      [showRGB]="showRGB"
-      [depthImageUrl]="depthImageUrl"
-      [colorImageUrl]="colorImageUrl"
-    ></app-cam-streams>
-        <!-- Reconfiguring Overlay -->
-        <div class="overlay" *ngIf="isReconfiguring">
-          <div class="overlay-content">
-            <mat-icon class="spinner">autorenew</mat-icon>
-            <p>Reconfiguring. Please wait...</p>
-          </div>
+    <div class="persistent-header">
+      <button mat-icon-button class="sidebar-toggle" (click)="sidenav.toggle()">
+        <mat-icon>{{ sidePanelOpen ? 'chevron_left' : 'menu' }}</mat-icon>
+      </button>
+      <span class="header-title">Intel RealSense Viewer</span>
+    </div>
+
+    <div class="content-area">
+      <app-cam-streams
+        [showDepth]="showDepth"
+        [showRGB]="showRGB"
+        [depthImageUrl]="depthImageUrl"
+        [colorImageUrl]="colorImageUrl"
+        [depthMetadataLines]="depthMetadataLines"
+        [rgbMetadataLines]="rgbMetadataLines">
+      </app-cam-streams>
+
+      <!-- Overlay while reconfiguring -->
+      <div class="overlay" *ngIf="isReconfiguring">
+        <div class="overlay-content">
+          <mat-icon class="spinner">autorenew</mat-icon>
+          <p>Reconfiguring. Please wait...</p>
         </div>
+      </div>
+    </div>
   </mat-sidenav-content>
 </mat-sidenav-container>
 
@@ -1454,28 +1614,131 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-viewer\cam-viewer.component.scss
 File type: .scss
+/* File: cam-viewer.component.scss */
 @import '../../styles/_variables.scss';
+
+:host {
+  display: block;
+  height: 100%;
+}
 
 .viewer-container {
   width: 100%;
   height: 100%;
 }
 
-/* mat-sidenav-container and mat-sidenav-content
-   are already set to 100% in global CSS, so no
-   partial coverage or white space. */
+/* Sidenav styling */
+::ng-deep .control-sidenav {
+  width: 300px !important;
+  background-color: $dark-background !important;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  border-right: 1px solid #444;
 
-.sidenav-container {
+  .sidebar-header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 8px;
+    height: 48px;
+    border-bottom: 1px solid #444;
+    background-color: $darkest-background;
+
+    .sidebar-logo {
+      height: 32px;
+    }
+  }
+
+  .sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+    height: calc(100vh - 48px);
+    padding: 0 16px 16px 16px;
+
+    &::-webkit-scrollbar {
+      width: 6px;
+      background-color: $dark-background;
+    }
+    &::-webkit-scrollbar-thumb {
+      background-color: #2f2f2f;
+      border-radius: 3px;
+      border: 1px solid $darkest-background;
+      &:hover {
+        background-color: #3f3f3f;
+      }
+    }
+  }
+}
+
+/* Header bar for toggle button */
+.persistent-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  background-color: $dark-background;
+  border-bottom: 1px solid #444;
+  height: 48px;
+
+  .sidebar-toggle {
+    color: $primary-text;
+    background-color: rgba($realsense-blue, 0.1);
+    margin-right: 16px;
+    transition: all 0.3s ease;
+    &:hover {
+      background-color: $realsense-blue;
+      transform: scale(1.1);
+    }
+  }
+  .header-title {
+    color: $primary-text;
+    font-size: 1.1rem;
+    font-weight: 500;
+  }
+}
+
+.content-area {
+  background-color: $darkest-background;
+  position: relative;
+  min-height: calc(100vh - 48px);
+}
+
+/* Overlay while reconfiguring */
+.overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
   height: 100%;
-  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.6);
+  background: rgba($darkest-background, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+
+  .overlay-content {
+    text-align: center;
+    color: $primary-text;
+    .spinner {
+      font-size: 3rem;
+      animation: spin 1s linear infinite;
+      color: $realsense-blue;
+      margin-bottom: 1rem;
+    }
+    p {
+      font-size: 1.2rem;
+      margin: 0;
+    }
+  }
 }
 
-::ng-deep mat-sidenav {
-  width: 270px !important;
-  background: linear-gradient($dark-background, #2a2a2a);
-  color: $primary-text;
-  /* Or put your .sidebar styles here if needed */
+@keyframes spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
+
 
 --------------------------------------------------
 File End
@@ -1516,7 +1779,6 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\cam-viewer\cam-viewer.component.ts
 File type: .ts
-// cam-viewer.component.ts
 import { Component, OnInit } from '@angular/core';
 import { WebSocketService } from '../../services/web-socket.service';
 import { HttpConfigService } from '../../services/http-config.service';
@@ -1532,15 +1794,19 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTableModule } from '@angular/material/table';
+
+import { MatToolbarModule } from '@angular/material/toolbar';
 import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { AppRoutingModule } from '../../app-routing.module';
+import { ConnectionStatusComponent } from '../connection-status/connection-status.component';
+import { distinctUntilChanged, Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-cam-viewer',
   templateUrl: './cam-viewer.component.html',
   styleUrls: ['./cam-viewer.component.scss'],
   standalone: true,
-  imports: [SidebarControlsComponent,CamStreamsComponent,    BrowserModule,
+  imports: [SidebarControlsComponent,CamStreamsComponent,ConnectionStatusComponent,    BrowserModule,
       AppRoutingModule,
       MatSlideToggleModule,
       BrowserAnimationsModule,
@@ -1552,6 +1818,7 @@ import { AppRoutingModule } from '../../app-routing.module';
       MatInputModule,
       MatSelectModule,
       MatButtonModule,
+      MatToolbarModule,
       ]
 })
 export class CamViewerComponent implements OnInit {
@@ -1559,89 +1826,131 @@ export class CamViewerComponent implements OnInit {
   showDepth = false;
   showRGB = false;
 
-  isReconfiguring = false;
 
+
+  sidePanelOpen = true;
+  isReconfiguring = false;
+  public rgbMetadataLines: string[] = [];
+  public depthMetadataLines: string[] = [];
   // Streamed images
   depthImageUrl: string = '';
   colorImageUrl: string = '';
   // Local copies of metadata booleans
   depthMetadataOn = false;
   rgbMetadataOn = false;
+  private activeSubscriptions = new Subscription();
+  private connectionSub: Subscription | null = null;
+
   constructor(
     private webSocketService: WebSocketService,
     private httpConfigService: HttpConfigService
   ) {}
+ngOnInit(): void {
+  this.connectionSub = this.webSocketService.getConnectionStatus().pipe(
+    distinctUntilChanged()
+  ).subscribe(connected => {
+    if (connected) {
+      this.startStreaming();
+      this.webSocketService.startStream(); // Add this line
+    } else {
+      this.stopStreaming();
+      this.resetUIState();
+    }
+  });
+}
+ngOnDestroy() {
+  this.connectionSub?.unsubscribe();
+  this.activeSubscriptions.unsubscribe();
+}
 
-  ngOnInit(): void {
-    // Start streaming
-    this.webSocketService.startStream();
-
-    // Subscribe to incoming frames
-    this.webSocketService.getVideoStream().subscribe(frame => {
-      if (this.showRGB) {
-        this.colorImageUrl = 'data:image/jpeg;base64,' + frame.color;
-      } else {
-        this.colorImageUrl = '';
-      }
-
-      if (this.showDepth) {
-        this.depthImageUrl = 'data:image/jpeg;base64,' + frame.depth;
-      } else {
-        this.depthImageUrl = '';
+  private startStreaming() {
+    const videoSubscription = this.webSocketService.getVideoStream().subscribe({
+      next: frame => {
+        // Clear previous metadata if streams are off
+        this.rgbMetadataLines = frame.metadata?.rgb || [];
+        this.depthMetadataLines = frame.metadata?.depth || [];
+        
+        // Update frames and metadata
+        if (this.showRGB) {
+          this.colorImageUrl = 'data:image/jpeg;base64,' + frame.color;
+          this.rgbMetadataLines = frame.metadata?.rgb || [];
+        }
+        if (this.showDepth) {
+          this.depthImageUrl = 'data:image/jpeg;base64,' + frame.depth;
+          this.depthMetadataLines = frame.metadata?.depth || [];
+        }
       }
     });
+    
+    // Store subscription to clean up later
+    this.activeSubscriptions.add(videoSubscription);
   }
-
-  // Called when depth toggle changes
+  private stopStreaming() {
+    this.activeSubscriptions.unsubscribe();
+    this.activeSubscriptions = new Subscription();
+    
+    this.depthImageUrl = '';
+    this.colorImageUrl = '';
+    this.rgbMetadataLines = [];
+    this.depthMetadataLines = [];
+    this.showDepth = false;
+    this.showRGB = false;
+  }
+  private resetUIState() {
+    this.depthMetadataOn = false;
+    this.rgbMetadataOn = false;
+    this.isReconfiguring = false;
+  }
+  // Toggling the depth module on/off should NOT trigger reconfig overlay
   onDepthToggle(newValue: boolean) {
     this.showDepth = newValue;
     console.log('Depth Module:', newValue ? 'Enabled' : 'Disabled');
   }
 
-
+  // Toggling the RGB module on/off should NOT trigger reconfig overlay
   onRgbToggle(newValue: boolean) {
     this.showRGB = newValue;
     console.log('RGB Module:', newValue ? 'Enabled' : 'Disabled');
   }
 
-
-  // Called when updating Depth config
+  // Update Depth configuration: this is an actual reconfig → show overlay
   updateDepthConfig(event: { resolution: string; frameRate: string }) {
     this.isReconfiguring = true;
+
     this.httpConfigService.updateConfiguration('depth', event.resolution, event.frameRate)
-      .subscribe(
-        response => {
-          console.log('Depth config updated', response);
-          alert(`Depth Updated: ${event.resolution}@${event.frameRate}fps`);
+      .subscribe({
+        next: () => {
+          // Optionally restart the stream
           this.webSocketService.startStream();
-          this.isReconfiguring = false;
+
+          // Give the pipeline a second to restart, then hide overlay
+          setTimeout(() => { this.isReconfiguring = false; }, 1000);
         },
-        error => {
-          console.error('Error updating Depth config', error);
-          alert(`Error updating Depth: ${error.message}`);
+        error: error => {
           this.isReconfiguring = false;
+          console.error('Error updating Depth config', error);
         }
-      );
+      });
   }
 
-  // Called when updating RGB config
+  // Update RGB configuration: this is an actual reconfig → show overlay
   updateRGBConfig(event: { resolution: string; frameRate: string }) {
-    this.isReconfiguring = true; // show overlay
+    this.isReconfiguring = true;
+
     this.httpConfigService.updateConfiguration('rgb', event.resolution, event.frameRate)
-      .subscribe(
-        response => {
-          console.log('RGB config updated', response);
-          alert(`RGB Updated: ${event.resolution}@${event.frameRate}fps`);
+      .subscribe({
+        next: () => {
           this.webSocketService.startStream();
-          this.isReconfiguring = false; // hide overlay
+          // Hide overlay
+          this.isReconfiguring = false;
         },
-        error => {
+        error: error => {
+          this.isReconfiguring = false;
           console.error('Error updating RGB config', error);
-          alert(`Error updating RGB: ${error.message}`);
-          this.isReconfiguring = false; // hide overlay
         }
-      );
+      });
   }
+
   // Helper method to send configuration updates to the server
   private sendConfigurationUpdate(module: string, resolution: string, frameRate: string): void {
     this.httpConfigService.updateConfiguration(module, resolution, frameRate).subscribe(
@@ -1675,24 +1984,224 @@ export class CamViewerComponent implements OnInit {
   onDepthMetadataToggle(newValue: boolean) {
     this.depthMetadataOn = newValue;
     console.log('Depth Metadata toggled to:', newValue);
+    if (!newValue) this.depthMetadataLines = [];
 
-    // Call server to toggle metadata
-    this.httpConfigService.toggleMetadata('depth').subscribe(
-      (res) => console.log('[Depth Metadata]:', res),
-      (err) => console.error(err)
-    );
   }
 
   // Called when rgb metadata toggle changes
   onRgbMetadataToggle(newValue: boolean) {
     this.rgbMetadataOn = newValue;
     console.log('RGB Metadata toggled to:', newValue);
-
     // Call server to toggle metadata
-    this.httpConfigService.toggleMetadata('rgb').subscribe(
-      (res) => console.log('[RGB Metadata]:', res),
-      (err) => console.error(err)
-    );
+    if (!newValue) this.rgbMetadataLines = [];
+  }
+  toggleSidePanel() {
+    this.sidePanelOpen = !this.sidePanelOpen;
+  }
+  stopStreamingServerSide() {
+    // Tell server to stop streaming for this app
+    this.webSocketService.stopStreamServerSide();
+    
+    // Then also unsubscribe locally
+
+  }
+}
+
+
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\connection-status\connection-status.component.html
+File type: .html
+<!-- connection-status.component.html -->
+<div class="status-container" [class.connected]="deviceConnected">
+    <div class="status-indicator"></div>
+    <span class="status-text">
+      {{ getStatusText() }}
+    </span>
+  </div>
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\connection-status\connection-status.component.scss
+File type: .scss
+@import '../../styles/variables';
+
+.status-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-radius: 25px;
+  background: rgba($dark-background, 0.95);
+  backdrop-filter: blur(8px);
+  border: 1px solid;
+  border-color: rgba($primary-text, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 1000;
+
+  .status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #ff4757;
+    position: relative;
+    transition: all 0.3s ease;
+    
+    &::before {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }
+  }
+
+  .status-text {
+    font-size: 0.9rem;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    color: $primary-text;
+  }
+
+  &.connected {
+    border-color: rgba($realsense-blue, 0.2);
+    
+    .status-indicator {
+      background: #2ed573;
+      box-shadow: 0 0 12px rgba(46, 213, 115, 0.3);
+      
+      &::before {
+        border: 1px solid #2ed573;
+      }
+    }
+  }
+
+  &:not(.connected) {
+    .status-indicator {
+      animation: warning-pulse 1.5s infinite;
+    }
+  }
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 1 }
+  100% { transform: scale(2.5); opacity: 0 }
+}
+
+@keyframes warning-pulse {
+  0% { opacity: 1 }
+  50% { opacity: 0.5 }
+  100% { opacity: 1 }
+}
+
+
+// Keep existing styles but add:
+.status-container.connected {
+    .status-indicator {
+      background: #2ed573;
+      box-shadow: 0 0 12px rgba(46, 213, 115, 0.3);
+    }
+  }
+  
+  .status-container:not(.connected) {
+    .status-indicator {
+      background: #ff4757;
+      animation: warning-pulse 1.5s infinite;
+    }
+  }
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\connection-status\connection-status.component.spec.ts
+File type: .ts
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+
+import { ConnectionStatusComponent } from './connection-status.component';
+
+describe('ConnectionStatusComponent', () => {
+  let component: ConnectionStatusComponent;
+  let fixture: ComponentFixture<ConnectionStatusComponent>;
+
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      declarations: [ConnectionStatusComponent]
+    })
+    .compileComponents();
+
+    fixture = TestBed.createComponent(ConnectionStatusComponent);
+    component = fixture.componentInstance;
+    fixture.detectChanges();
+  });
+
+  it('should create', () => {
+    expect(component).toBeTruthy();
+  });
+});
+
+
+--------------------------------------------------
+File End
+--------------------------------------------------
+
+
+C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\connection-status\connection-status.component.ts
+File type: .ts
+// connection-status.component.ts
+import { Component, OnInit } from '@angular/core';
+import { WebSocketService } from '../../services/web-socket.service';
+
+@Component({
+  selector: 'app-connection-status',
+  templateUrl: './connection-status.component.html',
+  styleUrls: ['./connection-status.component.scss'],
+  standalone: true
+})
+export class ConnectionStatusComponent implements OnInit {
+  deviceConnected = false;
+  reason = '';
+
+  constructor(private wsService: WebSocketService) {}
+
+  ngOnInit() {
+    this.wsService.getConnectionStatus().subscribe(connected => {
+      this.deviceConnected = connected;
+    });
+    this.wsService.getDisconnectReason().subscribe(reason => {
+      this.reason = reason;
+    });
+  }
+
+  getStatusText(): string {
+    if (this.deviceConnected) {
+      return 'Connected';
+    }
+
+    // Handle different reason messages
+    switch (this.reason) {
+      case 'camera_disconnected':
+        return 'Camera Disconnected';
+      case 'transport close':
+      case 'ping timeout':
+      case 'Server unreachable':
+        return 'Server Unreachable';
+      default:
+        return 'Disconnected';
+    }
   }
 }
 
@@ -1704,94 +2213,102 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\sidebar-controls\sidebar-controls.component.html
 File type: .html
+<!-- File: sidebar-controls.component.html -->
+ 
 <div class="sidebar">
-    <h3>Camera Info</h3>
-    <div class="camera-info">
-      <p><strong>Name:</strong> {{ cameraName }}</p>
-      <p><strong>Serial:</strong> {{ cameraSerial }}</p>
-      <p><strong>Firmware:</strong> {{ cameraFirmware }}</p>
-      <p><strong>USB Type:</strong> {{ cameraUsb }}</p>
-    </div>
-    <h3>Modules</h3>
-  
-    <!-- DEPTH TOGGLE -->
-    <div class="module-toggle">
-      <mat-slide-toggle  
-        [(ngModel)]="depthModuleEnabled"
-        (ngModelChange)="onDepthToggle($event)">
-        Depth Module
-      </mat-slide-toggle>
-  
-      <!-- Depth Module Controls -->
-      <div *ngIf="depthModuleEnabled" class="control-panel">
-        <h4>Depth Module Controls</h4>
-        <!-- Resolution & Frame Rate -->
-        <p>Resolution:</p>
-        <select [(ngModel)]="selectedDepthResolution" (change)="onDepthResolutionChange()">
-          <option value="640x480">640x360</option>
-          <option value="1280x720">1280x720</option>
-        </select>
-  
-        <p>Frame Rate:</p>
-        <select [(ngModel)]="selectedDepthFrameRate" (change)="onDepthResolutionChange()">
-          <option value="15">15 FPS</option>
-          <option value="30">30 FPS</option>
-        </select>
-  
-        <p>Metadata:</p>
-        <mat-slide-toggle
-          [(ngModel)]="depthMetadataEnabled"
-          (ngModelChange)="onDepthMetadataToggle($event)">
-          Show Depth Metadata
-        </mat-slide-toggle>
-        
-        <p>Exposure:</p>
-        <input type="range" min="0" max="1000" step="50"
-               [(ngModel)]="depthExposureValue"
-               (change)="onDepthExposureChange()" />
-        {{ depthExposureValue }}
+  <div class="camera-info-container">
+    <mat-expansion-panel>
+      <mat-expansion-panel-header>
+        <mat-panel-title>Camera Info</mat-panel-title>
+      </mat-expansion-panel-header>
+      <div class="camera-info">
+        <p><strong>Name:</strong> {{ cameraName }}</p>
+        <p><strong>Serial:</strong> {{ cameraSerial }}</p>
+        <p><strong>Firmware:</strong> {{ cameraFirmware }}</p>
+        <p><strong>USB Type:</strong> {{ cameraUsb }}</p>
       </div>
-    </div>
-  
-    <!-- RGB TOGGLE -->
-    <div class="module-toggle">
+    </mat-expansion-panel>
+  </div>
+
+  <h3>Modules</h3>
+
+  <!-- Depth Module -->
+  <div class="module-toggle">
+    <mat-slide-toggle
+      [(ngModel)]="depthModuleEnabled"
+      (ngModelChange)="onDepthToggle($event)">
+    </mat-slide-toggle>
+    Depth Module
+
+    <div *ngIf="depthModuleEnabled" class="control-panel">
+      <h4>Depth Module Controls</h4>
+      <p>Resolution:</p>
+      <select [(ngModel)]="selectedDepthResolution" (change)="onDepthResolutionChange()">
+        <option value="640x360">640x360</option>
+        <option value="1280x720">1280x720</option>
+      </select>
+
+      <p>Frame Rate:</p>
+      <select [(ngModel)]="selectedDepthFrameRate" (change)="onDepthResolutionChange()">
+        <option value="15">15 FPS</option>
+        <option value="30">30 FPS</option>
+      </select>
+
+      <p>Metadata:</p>
       <mat-slide-toggle
-        [(ngModel)]="rgbCameraEnabled"
-        (ngModelChange)="onRgbToggle($event)">
-        RGB Camera
+        [(ngModel)]="depthMetadataEnabled"
+        (ngModelChange)="onDepthMetadataToggle($event)">
       </mat-slide-toggle>
-  
-      <!-- RGB Camera Controls -->
-      <div *ngIf="rgbCameraEnabled" class="control-panel">
-        <h4>RGB Camera Controls</h4>
-        <p>Resolution:</p>
-        <select [(ngModel)]="selectedRGBResolution" (change)="onRgbResolutionChange()">
-          <option value="640x480">640x360</option>
-          <option value="1280x720">1280x720</option>
-        </select>
-  
-        <p>Frame Rate:</p>
-        <select [(ngModel)]="selectedRGBFrameRate" (change)="onRgbResolutionChange()">
-          <option value="15">15 FPS</option>
-          <option value="30">30 FPS</option>
-        </select>
-  
-        <p>Metadata:</p>
-        <mat-slide-toggle
-          [(ngModel)]="rgbMetadataEnabled"
-          (ngModelChange)="onRgbMetadataToggle($event)">
-          Show RGB Metadata
-        </mat-slide-toggle>
-  
-        <p>Exposure:</p>
-        <input type="range" min="0" max="1000" step="50"
-               [(ngModel)]="rgbExposureValue"
-               (change)="onRgbExposureChange()" />
-        {{ rgbExposureValue }}
-      </div>
+      Show Depth Metadata
+
+      <p>Exposure:</p>
+      <input type="range" min="0" max="1000" step="50"
+             [(ngModel)]="depthExposureValue"
+             (change)="onDepthExposureChange()" />
+      {{ depthExposureValue }}
     </div>
   </div>
-  
+
+  <!-- RGB Module -->
+  <div class="module-toggle">
+    <mat-slide-toggle
+      [(ngModel)]="rgbCameraEnabled"
+      (ngModelChange)="onRgbToggle($event)">
+    </mat-slide-toggle>
+    RGB Camera
+
+    <div *ngIf="rgbCameraEnabled" class="control-panel">
+      <h4>RGB Camera Controls</h4>
+      <p>Resolution:</p>
+      <select [(ngModel)]="selectedRGBResolution" (change)="onRgbResolutionChange()">
+        <option value="640x360">640x360</option>
+        <option value="1280x720">1280x720</option>
+      </select>
+
+      <p>Frame Rate:</p>
+      <select [(ngModel)]="selectedRGBFrameRate" (change)="onRgbResolutionChange()">
+        <option value="15">15 FPS</option>
+        <option value="30">30 FPS</option>
+      </select>
+
+      <p>Metadata:</p>
+      <mat-slide-toggle
+        [(ngModel)]="rgbMetadataEnabled"
+        (ngModelChange)="onRgbMetadataToggle($event)">
+      </mat-slide-toggle>
+      Show RGB Metadata
+
+      <p>Exposure:</p>
+      <input type="range" min="0" max="1000" step="50"
+             [(ngModel)]="rgbExposureValue"
+             (change)="onRgbExposureChange()" />
+      {{ rgbExposureValue }}
+    </div>
+  </div>
+</div>
+<button mat-raised-button color="warn" (click)="onHardReset()">
+  Hard Reset
+</button>
 
 --------------------------------------------------
 File End
@@ -1800,87 +2317,102 @@ File End
 
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\components\sidebar-controls\sidebar-controls.component.scss
 File type: .scss
+/* File: sidebar-controls.component.scss */
 @import '../../styles/_variables.scss';
+
 .sidebar {
-    background: linear-gradient($dark-background, #2a2a2a); 
-    height: 100%;
-    padding: 1rem;
-    color: $primary-text;
-  
-    h3 {
-      color: $realsense-blue;
-      margin-top: 0;
-      margin-bottom: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 48px);
+  color: $primary-text;
+  padding: 0.75rem;
+
+  ::ng-deep .mat-expansion-panel,
+  ::ng-deep .mat-expansion-panel-body {
+    background-color: $dark-background !important;
+    color: $primary-text !important;
+    border: 1px solid #444;
+  }
+  ::ng-deep .mat-expansion-panel-header,
+  ::ng-deep .mat-expansion-panel-header .mat-expansion-panel-header-title,
+  ::ng-deep .mat-expansion-panel-header .mat-expansion-panel-header-description {
+    color: $primary-text !important;
+  }
+
+  .camera-info-container {
+    background-color: $dark-background;
+    border: 1px solid #444;
+    border-radius: 4px;
+    margin-bottom: 0.75rem;
+    padding: 0.75rem;
+
+    .camera-info p {
+      margin: 0.5rem 0;
     }
-  
-    .camera-info {
-      background-color: #2f2f2f;
+  }
+
+  h3 {
+    color: $realsense-blue;
+    margin-bottom: 0.5rem;
+  }
+
+  .module-toggle {
+    margin-bottom: 0.5rem;
+    color: $primary-text;
+    .mat-slide-toggle {
+      margin-right: 0.5rem;
+    }
+
+    .control-panel {
+      margin-top: 0.5rem;
       padding: 0.5rem;
       border: 1px solid #444;
-      margin-bottom: 1rem;
-  
+      border-left: 4px solid $realsense-blue;
+      border-radius: 4px;
+      background-color: #2f2f2f;
+
+      h4 {
+        color: $realsense-blue;
+        margin-top: 0;
+      }
       p {
         margin: 0.3rem 0;
+      }
+      input,
+      select {
         color: $primary-text;
-        // If text is still not bright enough, use #ffffff
+        background-color: $dark-background;
+        border: 1px solid #555;
+      }
+      input[type='range'] {
+        accent-color: $realsense-blue;
       }
     }
-  
-    .module-toggle {
-      margin-bottom: 1.5rem;
-  
-      mat-slide-toggle {
-        color: $primary-text !important;
-  
-        &.mat-checked {
-          .mat-slide-toggle-bar {
-            background-color: $realsense-blue !important;
-          }
-          .mat-slide-toggle-thumb {
-            background-color: $realsense-blue !important;
-          }
-        }
-      }
-  
-      .control-panel {
-        background-color: #2a2a2a;
-        border-left: 4px solid $realsense-blue;
-        padding: 0.5rem 1rem;
-        margin-top: 0.5rem;
-        mat-slide-toggle {
-            color: $primary-text;
-          }
-        h4 {
-          color: $realsense-blue;
-          margin-top: 0;
-        }
-  
-        p {
-          margin: 0.4rem 0;
-          color: $primary-text;
-        }
-  
-        input,
-        select {
-          color: $primary-text; 
-          background-color: #424242; 
-          border: 1px solid #555;
-        }
-  
-        input[type="range"] {
-          // range track & thumb
-          accent-color: $realsense-blue;
-        }
+  }
+}
 
+/* Optional: reduce font size for smaller screens */
+@media (max-height: 800px) {
+  .sidebar {
+    font-size: 0.9rem;
+    padding: 0.4rem;
+    .control-panel {
+      padding: 0.4rem;
+      border-left-width: 2px;
+      h4 {
+        margin-bottom: 0.4rem;
+      }
+      p {
+        margin: 0.2rem 0;
+      }
+      input,
+      select {
+        font-size: 0.8rem;
       }
     }
-  ::ng-deep .mat-mdc-slide-toggle .mdc-label {
-    color: $primary-text !important; // or #ffffff
   }
+}
 
-
-  }
-  
 
 --------------------------------------------------
 File End
@@ -1937,6 +2469,7 @@ import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { AppRoutingModule } from '../../app-routing.module';
 import { CamViewerComponent } from '../cam-viewer/cam-viewer.component';
 import { HttpConfigService } from '../../services/http-config.service';
+import { WebSocketService } from '../../services/web-socket.service';
 
 @Component({
   selector: 'app-sidebar-controls',
@@ -1968,9 +2501,9 @@ export class SidebarControlsComponent implements OnInit {
   rgbMetadataEnabled = false;
 
   // Resolutions
-  selectedDepthResolution = '640x480';
+  selectedDepthResolution = '640x360';
   selectedDepthFrameRate = '30';
-  selectedRGBResolution = '640x480';
+  selectedRGBResolution = '640x360';
   selectedRGBFrameRate = '30';
 
   // Exposures
@@ -1994,13 +2527,36 @@ export class SidebarControlsComponent implements OnInit {
   // NEW events for metadata
   @Output() depthMetadataToggle = new EventEmitter<boolean>();
   @Output() rgbMetadataToggle   = new EventEmitter<boolean>();
-  constructor(private httpConfigService: HttpConfigService) {}
+  constructor(
+    private httpConfigService: HttpConfigService,  private webSocketService: WebSocketService
+  ) {}
 
   ngOnInit() {
     this.loadCameraInfo();
+    this.loadDefaultsFromServer();
+
   }
 
-
+  private loadDefaultsFromServer() {
+    this.httpConfigService.getDefaults().subscribe({
+      next: (defaults) => {
+        // E.g., store them in a local variable if needed
+        // Or you can set your UI to these defaults immediately
+        console.log('[SidebarControls] Received defaults:', defaults);
+  
+        this.selectedDepthResolution = `${defaults.depth.width}x${defaults.depth.height}`;
+        this.selectedDepthFrameRate  = defaults.depth.fps.toString();
+        this.selectedRGBResolution   = `${defaults.color.width}x${defaults.color.height}`;
+        this.selectedRGBFrameRate    = defaults.color.fps.toString();
+  
+        this.depthExposureValue = defaults.depth.exposure;
+        this.rgbExposureValue   = defaults.color.exposure;
+  
+        // ...any other UI toggles you want to set...
+      },
+      error: err => console.error('Error loading defaults:', err)
+    });
+  }
   private loadCameraInfo() {
     this.httpConfigService.getCameraInfo().subscribe({
       next: (info) => {
@@ -2039,15 +2595,18 @@ export class SidebarControlsComponent implements OnInit {
   }
 
   onDepthMetadataToggle(newValue: boolean) {
-    console.log('Depth Metadata toggled to:', newValue);
-    this.depthMetadataToggle.emit(newValue);
+    this.httpConfigService.setMetadata('depth', newValue).subscribe({
+      next: () => this.depthMetadataToggle.emit(newValue),
+      error: (err) => console.error('Failed to set depth metadata', err)
+    });
   }
 
   onRgbMetadataToggle(newValue: boolean) {
-    console.log('RGB Metadata toggled to:', newValue);
-    this.rgbMetadataToggle.emit(newValue);
+    this.httpConfigService.setMetadata('rgb', newValue).subscribe({
+      next: () => this.rgbMetadataToggle.emit(newValue),
+      error: (err) => console.error('Failed to set RGB metadata', err)
+    });
   }
-
 
   // Depth resolution/fps
   onDepthResolutionChange() {
@@ -2074,6 +2633,39 @@ export class SidebarControlsComponent implements OnInit {
   onRgbExposureChange() {
     this.rgbExposureChange.emit(this.rgbExposureValue);
   }
+
+// sidebar-controls.component.ts (excerpt)
+// Update onHardReset() method
+// Update onHardReset
+onHardReset() {
+  if (!confirm('Hard reset will restore all defaults. Continue?')) return;
+
+  // Force full disconnection
+  // this.webSocketService.forceDisconnect();
+  // this.httpConfigService.setMetadata('depth', false).subscribe();
+  // this.httpConfigService.setMetadata('rgb', false).subscribe();
+  // Reset all UI components
+  this.depthModuleEnabled = false;
+  this.rgbCameraEnabled = false;
+  this.depthMetadataEnabled = false;
+  this.rgbMetadataEnabled = false;
+
+  // Emit changes
+  this.depthToggleChange.emit(false);
+  this.rgbToggleChange.emit(false);
+  this.depthMetadataToggle.emit(false);
+  this.rgbMetadataToggle.emit(false);
+
+  // Server-side reset with delay
+    this.httpConfigService.hardReset().subscribe({
+      next: () => {
+        this.loadDefaultsFromServer();
+        this.webSocketService.startStream();
+      },
+      error: (err) => console.error('Hard reset failed:', err)
+    });
+}
+
 }
 
 --------------------------------------------------
@@ -2111,31 +2703,54 @@ File type: .ts
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { WebSocketService } from './web-socket.service';
 @Injectable({
   providedIn: 'root'
 })
 export class HttpConfigService {
   private apiUrl = 'http://localhost:5000/api/configure'; // Flask server URL
   private exposureApiUrl = 'http://localhost:5000/api/exposure'; // Endpoint for exposure updates
-  private toggleMetadataUrl = 'http://localhost:5000/api/toggle_metadata'; // endpoint for metadata
+  private setMetaDataUrl = 'http://localhost:5000/api/set_metadata'; // endpoint for metadata
   private cameraInfoUrl = 'http://localhost:5000/api/camera_info'
-  constructor(private http: HttpClient) { }
+  private hardResetUrl = 'http://localhost:5000/api/hard_reset'
+
+  constructor(private http: HttpClient,private webSocketService: WebSocketService) {}
   updateConfiguration(module: string, resolution: string, frameRate: string): Observable<any> {
-    const body = { module, resolution, frame_rate: frameRate };
-    return this.http.post(this.apiUrl, body);
+    return new Observable(observer => {
+      this.webSocketService.stopStreamServerSide();
+      setTimeout(() => {
+        this.http.post(this.apiUrl, { module, resolution, frame_rate: frameRate })
+          .subscribe({
+            next: (res) => {
+              this.webSocketService.startStream();
+              observer.next(res);
+            },
+            error: (err) => observer.error(err)
+          });
+      }, 500); // Wait for stream stop
+    });
   }
 
   updateExposure(module: string, exposureValue: number): Observable<any> {
     const body = { module, exposure: exposureValue };
     return this.http.post(this.exposureApiUrl, body);
   }
-toggleMetadata(module: string): Observable<any> {
-  return this.http.post(this.toggleMetadataUrl, { module });
+setMetadata(module: string, state: boolean): Observable<any> {
+  return this.http.post('http://localhost:5000/api/set_metadata', { 
+    module, 
+    state 
+  });
 }
-
   getCameraInfo(): Observable<any> {
     return this.http.get(this.cameraInfoUrl);
   }
+  hardReset(): Observable<any> {
+    return this.http.post(this.hardResetUrl, {});
+  }
+  getDefaults(): Observable<any> {
+    return this.http.get('http://localhost:5000/api/defaults');
+  }
+  
 } 
 
 --------------------------------------------------
@@ -2171,36 +2786,119 @@ File End
 C:\Users\aknani\uni\IntelRealSenceClient\src\app\services\web-socket.service.ts
 File type: .ts
 import { Injectable } from '@angular/core';
-import { io } from 'socket.io-client';
-import { Observable } from 'rxjs';
+import { io, Socket } from 'socket.io-client';
+import { Observable, BehaviorSubject } from 'rxjs';
 
 @Injectable({
   providedIn: 'root'
 })
 export class WebSocketService {
-  private socket: any;
+
+  private socket!: Socket;
+  private connectionStatus = new BehaviorSubject<boolean>(false);
+  // New: reason for disconnection or camera error
+  private disconnectReason = new BehaviorSubject<string>('');
 
   constructor() {
-    this.socket = io('http://localhost:5000');
+    this.initSocket();
+  }
+  stopStreamServerSide() {
+    this.socket.emit('stop_stream');
+  }
+  private initSocket() {
+    this.socket = io('http://localhost:5000', {
+      reconnectionAttempts: 3,
+      reconnectionDelay: 2000
+    });
+
+    // Connection success
+    this.socket.on('connect', () => {
+      console.log('Socket connected');
+      this.connectionStatus.next(true);
+      this.disconnectReason.next('');
+    });
+
+    // If server is not reachable at all or forcibly closed
+    this.socket.io.on('error', (error: any) => {
+      console.log(`Connection error: ${error}`);
+      this.connectionStatus.next(false);
+      this.disconnectReason.next('Server unreachable');
+    });
+
+    // If the socket is disconnected after a connection
+    this.socket.on('disconnect', (reason: any) => {
+      console.log('Socket disconnected:', reason);
+      this.connectionStatus.next(false);
+      // Could differentiate reason like 'io server disconnect' vs 'transport close'
+      this.disconnectReason.next(reason);
+    });
+
+    // Listen for device status changes from server
+    this.socket.on('device_status', (status: { connected: boolean; reason?: string }) => {
+      console.log('device_status event', status);
+      this.connectionStatus.next(status.connected);
+
+      // If a special reason is provided, pass it along
+      if (!status.connected && status.reason) {
+        this.disconnectReason.next(status.reason);
+      } else {
+        this.disconnectReason.next('');
+      }
+    });
   }
 
-  startStream() {
+  getConnectionStatus(): Observable<boolean> {
+    return this.connectionStatus.asObservable();
+  }
+
+  // New: expose the reason for disconnection or error
+  getDisconnectReason(): Observable<string> {
+    return this.disconnectReason.asObservable();
+  }
+
+  public startStream(): void {
+    if (!this.socket.connected) {
+      this.socket.connect();
+    }
     this.socket.emit('start_stream');
   }
 
-  getVideoStream(): Observable<{ color: string; depth: string }> {
-    return new Observable((observer) => {
-      this.socket.on('video_frame', (frame: { color: string; depth: string }) => {
+  getVideoStream(): Observable<{
+    color: string;
+    depth: string;
+    metadata?: {
+      rgb?: string[];
+      depth?: string[];
+    };
+  }> {
+    return new Observable(observer => {
+      this.socket.on('video_frame', (frame) => {
         observer.next(frame);
       });
+
+      // Optionally handle stream termination errors
+      return () => {
+        // This code runs on unsubscribe
+      };
     });
   }
+
   sendConfigurationUpdate(module: string, resolution: string, frameRate: string): void {
-    const data = { module, resolution, frameRate };
-    this.socket.emit('update_configuration', data);
-    console.log(`Configuration update sent for ${module}: ${resolution} at ${frameRate} FPS`);
+    this.socket.emit('update_configuration', { module, resolution, frameRate });
   }
+  disconnect() {
+    this.socket.disconnect();
+    this.socket.removeAllListeners();
+  }
+  public forceDisconnect() {
+    this.socket.disconnect();
+    this.socket.removeAllListeners();
+    this.connectionStatus.next(false);
+    this.disconnectReason.next('manual_reset');
+  }
+  
 }
+
 
 
 --------------------------------------------------
@@ -2217,6 +2915,15 @@ $realsense-blue: #009fde;
 $primary-text: #f0f0f0;             // near-whitish text
 $secondary-text: #b8b8b8;           // lighter gray for secondary text
 $link-color: #00aaff;               // or any accent you want
+
+// Scrollbar variables
+$scrollbar-width: 8px;
+$scrollbar-radius: 4px;
+$scrollbar-hover-lighten: 15%;
+// Scrollbar colors
+$scrollbar-thumb: #2f2f2f;
+$scrollbar-track: $darkest-background;
+$scrollbar-hover: #3f3f3f;
 
 --------------------------------------------------
 File End

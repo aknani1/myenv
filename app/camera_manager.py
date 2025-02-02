@@ -1,88 +1,118 @@
-from typing import Optional, Dict
+from .metadata_helpers import gather_metadata_and_profile_info
 import pyrealsense2 as rs
 import numpy as np
 import cv2
 import time
 import base64
-
-# If you are using a separate metadata_helpers file, import from there:
-from .metadata_helpers import gather_metadata_and_profile_info, overlay_in_top_left
-
+import socketio
+import traceback  # for more detailed logging
+from .config import DEFAULTS
 class CameraManager:
     """
     Manages Intel RealSense pipeline, configuration, and streaming for RGB & depth.
     """
 
     def __init__(self):
-        # Initialize pipeline and config
+        """
+        Sets up initial resources and returns a CameraManager at default settings.
+        """
+        # RealSense pipeline and config
         self.pipeline = rs.pipeline()
         self.config = rs.config()
 
-        # Default settings for color and depth
-        self.current_settings = {
-            "color": {"width": 640, "height": 360, "fps": 30},
-            "depth": {"width": 640, "height": 360, "fps": 30},
-        }
-        self.default_settings = {
-            "color": {"width": 640, "height": 360, "fps": 30},
-            "depth": {"width": 640, "height": 360, "fps": 30},
-        }
-        #device connection status
-        self.device_connected = False
+        # Store your default settings (from config.py or similar)
+        self.default_settings = DEFAULTS
 
-        # Streaming state
+        # Initialize all internal defaults (exposures, resolution, toggles, etc.)
+        self._init_internal_defaults()
+
+    def _init_internal_defaults(self):
+        """
+        Resets internal states such as resolution, FPS, exposure, and any toggles 
+        back to the DEFAULTS specified in self.default_settings. This does NOT 
+        physically reset the hardware or remove the device from context.
+        """
+        # Reapply resolution & FPS defaults
+        self.current_settings = {
+            "color": {
+                "width": self.default_settings["color"]["width"],
+                "height": self.default_settings["color"]["height"],
+                "fps": self.default_settings["color"]["fps"]
+            },
+            "depth": {
+                "width": self.default_settings["depth"]["width"],
+                "height": self.default_settings["depth"]["height"],
+                "fps": self.default_settings["depth"]["fps"]
+            }
+        }
+
+        # Reset streaming-status flags
+        self.device_connected = False
         self.is_streaming = False
 
-        # Metadata toggles
+        # Reset metadata toggles
         self.metadata_toggles = {"rgb": False, "depth": False}
 
-        # Exposure values
-        self.exposure_value_rgb = 300
-        self.exposure_value_depth = 300
+        # Reset exposure values
+        self.exposure_value_rgb = self.default_settings["color"]["exposure"]
+        self.exposure_value_depth = self.default_settings["depth"]["exposure"]
 
-        # Track last frame times for displayed FPS
+        # Reset auxiliary states (FPS counters, sensors, etc.)
         self.last_color_time = 0.0
         self.last_depth_time = 0.0
         self.displayed_color_fps = 0.0
         self.displayed_depth_fps = 0.0
-
-        # Keep references to sensors
         self.color_sensor = None
         self.depth_sensor = None
+
+        print("[CameraManager] Internal defaults re-initialized.")
         
+    def get_device_info(self):
+        """
+        Returns basic info about the connected RealSense device.
+        If pipeline isn't running, attempt to start it so we can query device info.
+        """
+        if not self.is_streaming:
+            try:
+                self.configure_pipeline()
+            except Exception as e:
+                print("[CameraManager] Could not start pipeline for get_device_info:", e)
+                raise e  # or handle differently
 
-
+        try:
+            profile = self.pipeline.get_active_profile()
+            device = profile.get_device()
+            info = {
+                "name": device.get_info(rs.camera_info.name),
+                "serial_number": device.get_info(rs.camera_info.serial_number),
+                "firmware_version": device.get_info(rs.camera_info.firmware_version),
+                "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
+            }
+            self.device_connected = True
+            return info
+        except RuntimeError as e:
+            print("[CameraManager] get_active_profile() error:", e)
+            raise
 
     def reset_to_default(self):
-        """
-        Stop the pipeline and reset all relevant fields to default values.
-        """
+        """Full hardware-aware reset"""
         self.stop_stream()
-
-        # Restore default resolution/fps
-        self.current_settings = {
-            "color": dict(self.default_settings["color"]),
-            "depth": dict(self.default_settings["depth"]),
-        }
-
-        # Reset toggles
-        self.metadata_toggles = {"rgb": False, "depth": False}
-
-        # Reset exposure
-        self.exposure_value_rgb = 300
-        self.exposure_value_depth = 300
-        # At this point, we do not start the pipeline automatically because
-        # we might only start streaming once a new client connects
-        print("[CameraManager] Reset to default settings.")
+        try:
+            # Hardware-level reset
+            ctx = rs.context()
+            if ctx.query_devices().size() > 0:
+                ctx.remove_device(ctx.query_devices()[0].get_info(rs.camera_info.serial_number))
+        except:
+            pass
         
-        
-        
-        
+        # Reinitialize fresh
+        self.__init__()
+        print("[CameraManager] Full hardware reset complete")
+    
     def configure_pipeline(self):
         if self.is_streaming:
             self.stop_stream()
 
-        # Clear previous config
         self.config.disable_all_streams()
 
         # Enable color stream
@@ -100,22 +130,20 @@ class CameraManager:
         )
 
         try:
-            # Start pipeline and update status only on success
             profile = self.pipeline.start(self.config)
             self.is_streaming = True
-            self.device_connected = True  # Correct placement after successful start
+            self.device_connected = True
             print("[CameraManager] Pipeline started with:", self.current_settings)
-
-            # Cache sensor references
             self._cache_sensors(profile)
         except Exception as e:
             self.device_connected = False
             self.is_streaming = False
             print(f"[CameraManager] Failed to start pipeline: {e}")
             raise
+
     def _cache_sensors(self, profile: rs.pipeline_profile):
         """
-        Internal method to store references to RGB and Depth sensors once pipeline is started.
+        Store references to RGB and Depth sensors once pipeline is started.
         """
         device = profile.get_device()
         sensors = device.query_sensors()
@@ -126,14 +154,15 @@ class CameraManager:
             elif "depth" in name:
                 self.depth_sensor = sensor
 
-        # Optionally disable auto-exposure for color
+        # Disable auto-exposure for color
         if self.color_sensor is not None:
             self.color_sensor.set_option(rs.option.enable_auto_exposure, 0)
             self.color_sensor.set_option(rs.option.exposure, self.exposure_value_rgb)
 
+        # Disable auto-exposure for depth
         if self.depth_sensor is not None:
-             self.depth_sensor.set_option(rs.option.enable_auto_exposure, 0)
-             self.depth_sensor.set_option(rs.option.exposure, self.exposure_value_depth)
+            self.depth_sensor.set_option(rs.option.enable_auto_exposure, 0)
+            self.depth_sensor.set_option(rs.option.exposure, self.exposure_value_depth)
 
     def stop_stream(self):
         """
@@ -144,7 +173,7 @@ class CameraManager:
             self.pipeline.stop()
             print("[CameraManager] Pipeline stopped.")
         except Exception:
-            pass  # In case it's already stopped
+            pass  # Already stopped
 
     def update_resolution_and_fps(self, module: str, width: int, height: int, fps: int):
         """
@@ -157,16 +186,13 @@ class CameraManager:
         else:
             raise ValueError("Unknown module name")
 
-        # Reconfigure pipeline to apply new settings
         self.configure_pipeline()
 
-    def toggle_metadata(self, module: str):
-        """
-        Enable/disable metadata overlay for the specified module (rgb or depth).
-        """
+    def set_metadata(self, module: str, state: bool):
+        """Set metadata overlay state for specified module"""
         if module in self.metadata_toggles:
-            self.metadata_toggles[module] = not self.metadata_toggles[module]
-        print(f"[CameraManager] Metadata for {module} set to {self.metadata_toggles[module]}")
+            self.metadata_toggles[module] = state
+        print(f"[CameraManager] Metadata for {module} set to {state}")
 
     def set_exposure(self, module: str, value: int):
         """
@@ -184,23 +210,44 @@ class CameraManager:
             print(f"[CameraManager] Invalid module or sensor not found for module={module}")
 
     def generate_frames(self):
-        """
-        Generator that yields encoded frames (color, depth) in real time.
-        Suitable for passing to a WebSocket or Socket.IO 'emit' loop.
-        """
-        if not self.is_streaming:
+            """
+            Generator that yields frames in real time. If the camera
+            accidentally disconnects (e.g., cable pulled), we detect it
+            and emit server->client events via Socket.IO.
+            """
+            # Ensure streaming is started
+            if not self.is_streaming:
                 self.configure_pipeline()
 
-        try:
-            while self.is_streaming:
-                try:
-                    frameset = self.pipeline.wait_for_frames()
+            try:
+                while self.is_streaming:
+                    try:
+                        frameset = self.pipeline.wait_for_frames()
+                    except RuntimeError as e:
+                        # This is raised if frames no longer arrive; camera offline?
+                        if "Frame didn't arrive within 5000" in str(e):
+                            print("[CameraManager] Physical camera disconnection detected!")
+                            self.device_connected = False
+                            # Stop streaming so we don't keep spamming errors
+                            self.stop_stream()
+
+                            # Emit a status event with reason
+                            socketio.emit('device_status', {
+                                'connected': False,
+                                'reason': 'camera_disconnected'
+                            })
+                            break
+                        else:
+                            print("[CameraManager] Other runtime error while waiting for frames:")
+                            traceback.print_exc()
+                            raise e
+
                     color_frame = frameset.get_color_frame()
                     depth_frame = frameset.get_depth_frame()
                     if not color_frame or not depth_frame:
                         continue
 
-                    # Calculate displayed FPS
+                    # Compute displayed FPS (Color)
                     now_c = time.time()
                     if self.last_color_time != 0:
                         dt_c = now_c - self.last_color_time
@@ -208,6 +255,7 @@ class CameraManager:
                             self.displayed_color_fps = 1.0 / dt_c
                     self.last_color_time = now_c
 
+                    # Compute displayed FPS (Depth)
                     now_d = time.time()
                     if self.last_depth_time != 0:
                         dt_d = now_d - self.last_depth_time
@@ -215,23 +263,21 @@ class CameraManager:
                             self.displayed_depth_fps = 1.0 / dt_d
                     self.last_depth_time = now_d
 
-                    # Convert frames to base64
+                    # Convert frames to JPG+base64
                     color_image = np.asanyarray(color_frame.get_data())
-                    depth_colorized_frame = rs.colorizer().colorize(depth_frame)
-                    depth_image = np.asanyarray(depth_colorized_frame.get_data())
+                    depth_image = np.asanyarray(rs.colorizer().colorize(depth_frame).get_data())
 
                     _, color_buf = cv2.imencode(".jpg", color_image)
                     _, depth_buf = cv2.imencode(".jpg", depth_image)
                     color_encoded = base64.b64encode(color_buf).decode("utf-8")
                     depth_encoded = base64.b64encode(depth_buf).decode("utf-8")
 
-                    # Gather metadata as lists of text lines (if toggled)
+                    # Gather metadata if toggled
                     lines_rgb = []
                     lines_depth = []
                     if self.metadata_toggles["rgb"]:
                         lines_rgb = gather_metadata_and_profile_info(color_frame)
                         lines_rgb.append(f"Displayed FPS: {self.displayed_color_fps:.1f}")
-
                     if self.metadata_toggles["depth"]:
                         lines_depth = gather_metadata_and_profile_info(depth_frame)
                         lines_depth.append(f"Displayed FPS: {self.displayed_depth_fps:.1f}")
@@ -244,37 +290,29 @@ class CameraManager:
                             "depth": lines_depth
                         }
                     }
-                except RuntimeError as e:
-                    if "Frame didn't arrive within 5000" in str(e):
-                        print("Device disconnected!")
-                        self.device_connected = False
-                        self.stop_stream()
-                        socketio.emit('device_status', {'connected': False})  # Add this
-                        break
-                    raise e
-        except Exception as e:
-            print(f"Streaming error: {str(e)}")
-            self.device_connected = False
-            self.stop_stream()
-        finally:
-            self.stop_stream()
 
-    def get_device_info(self):
+            except Exception as e:
+                print("[CameraManager] Exception during streaming:")
+                traceback.print_exc()
+                self.device_connected = False
+                self.stop_stream()
+            finally:
+                self.stop_stream()
+                # camera_manager.py
+
+    def reset_software_defaults(self):
         """
-        Returns basic info about the connected RealSense device.
-        If pipeline isn't running, it starts it so we can query device info.
+        Resets internal config to defaults but does NOT
+        do a hardware-level reset (i.e., does not remove the device from context).
         """
-        if not self.is_streaming:
-            self.configure_pipeline()
+        # Stop any streaming
+        self.stop_stream()
 
-        profile = self.pipeline.get_active_profile()
-        device = profile.get_device()
+        # Reinitialize self to restore default settings (exposures, resolution, toggles, etc.)
+        # This calls __init__() again, or you can do it manually if you wish.
+        self._init_internal_defaults()
+        # If needed, preserve self.device_connected status from before
 
-        info = {
-            "name": device.get_info(rs.camera_info.name),
-            "serial_number": device.get_info(rs.camera_info.serial_number),
-            "firmware_version": device.get_info(rs.camera_info.firmware_version),
-            "usb_type_descriptor": device.get_info(rs.camera_info.usb_type_descriptor),
-        }
-        self.device_connected = True
-        return info
+        print("[CameraManager] Software-only reset to in-memory defaults (hardware unchanged).")
+
+
