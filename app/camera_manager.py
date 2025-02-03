@@ -7,6 +7,8 @@ import base64
 import socketio
 import traceback  # for more detailed logging
 from .config import DEFAULTS
+from collections import deque
+
 class CameraManager:
     """
     Manages Intel RealSense pipeline, configuration, and streaming for RGB & depth.
@@ -16,6 +18,8 @@ class CameraManager:
         self.pipeline = rs.pipeline()
         self.config = rs.config()
         self.default_settings = DEFAULTS
+        self.color_frame_times = deque(maxlen=10)
+        self.depth_frame_times = deque(maxlen=10)
 
         self.current_settings = {
             "color": {
@@ -98,8 +102,10 @@ class CameraManager:
         if self.is_streaming:
             self.stop_stream()
 
+            
         self.config.disable_all_streams()
-
+        self.color_frame_times.clear()
+        self.depth_frame_times.clear()
         # Enable color stream
         c = self.current_settings["color"]
         self.config.enable_stream(
@@ -237,7 +243,9 @@ class CameraManager:
                     if self.last_color_time != 0:
                         dt_c = now_c - self.last_color_time
                         if dt_c > 0:
-                            self.displayed_color_fps = 1.0 / dt_c
+                            self.color_frame_times.append(dt_c)
+                            avg_dt_c = sum(self.color_frame_times) / len(self.color_frame_times)
+                            self.displayed_color_fps = 1.0 / avg_dt_c
                     self.last_color_time = now_c
 
                     # Compute displayed FPS (Depth)
@@ -245,7 +253,9 @@ class CameraManager:
                     if self.last_depth_time != 0:
                         dt_d = now_d - self.last_depth_time
                         if dt_d > 0:
-                            self.displayed_depth_fps = 1.0 / dt_d
+                            self.depth_frame_times.append(dt_c)
+                            avg_dt_d = sum(self.depth_frame_times) / len(self.depth_frame_times)
+                            self.displayed_depth_fps = 1.0 / avg_dt_d
                     self.last_depth_time = now_d
 
                     # Convert frames to JPG+base64
