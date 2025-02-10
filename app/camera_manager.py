@@ -17,8 +17,8 @@ class AppState:
 
     def __init__(self, *args, **kwargs):
         self.WIN_NAME = 'RealSense'
-        self.pitch, self.yaw = math.radians(-30), math.radians(-15)
-        self.translation = np.array([0, 0, -1], dtype=np.float32)
+        self.pitch, self.yaw = 0.0, 0.0  # Remove the math.radians(-30) and math.radians(-15)
+        self.translation = np.array([0, 0, -2], dtype=np.float32)
         self.distance = 2
         self.prev_mouse = 0, 0
         self.mouse_btns = [False, False, False]
@@ -30,6 +30,7 @@ class AppState:
     def reset(self):
         self.pitch, self.yaw, self.distance = 0, 0, 2
         self.translation[:] = 0, 0, -1
+    
 
     @property
     def rotation(self):
@@ -55,6 +56,7 @@ class CameraManager:
         self.color_frame_times = deque(maxlen=10)
         self.depth_frame_times = deque(maxlen=10)
         self.profile = None
+        self.stream3D = True
 
         self.current_settings = {
             "color": {
@@ -91,7 +93,10 @@ class CameraManager:
         # Sensor references
         self.color_sensor = None
         self.depth_sensor = None
-        
+    
+    def set3D(self, stream3D):
+        self.stream3D = stream3D
+    
         
     def get_device_info(self):
         """
@@ -412,7 +417,7 @@ class CameraManager:
             if not self.is_streaming:
                 self.configure_pipeline()
 
-            depth_profile = rs.video_stream_profile(self.profile.get_stream(rs.stream.depth))
+            depth_profile = rs.video_stream_profile(self.profile.get_stream(rs.stream.color))
             depth_intrinsics = depth_profile.get_intrinsics()
             w, h = depth_intrinsics.width, depth_intrinsics.height
             
@@ -455,14 +460,70 @@ class CameraManager:
                     depth_frame = frameset.get_depth_frame()
                     if not color_frame or not depth_frame:
                         continue
-                    
-                    depth_frame = decimate.process(depth_frame)
+                    D3_encoded = None
+                                            # Compute displayed FPS (Color)
 
-                    depth_intrinsics = rs.video_stream_profile(
-                        depth_frame.profile).get_intrinsics()
-                    w, h = depth_intrinsics.width, depth_intrinsics.height
 
-                    # Compute displayed FPS (Color)
+                    color_image = np.asanyarray(color_frame.get_data())
+                    depth_colorized = rs.colorizer().colorize(depth_frame)
+                    depth_image = np.asanyarray(depth_colorized.get_data())
+                    if self.stream3D:
+                        depth_frame = decimate.process(depth_frame)
+
+                        depth_intrinsics = rs.video_stream_profile(
+                            depth_frame.profile).get_intrinsics()
+                        w, h = depth_intrinsics.width, depth_intrinsics.height
+
+
+                        # Convert frames to JPG+base64
+                        
+                        
+                        depth_colormap = np.asanyarray(
+                        colorizer.colorize(depth_frame).get_data())
+
+                        mapped_frame, color_source = depth_frame, depth_colormap
+
+
+                        points = pc.calculate(depth_frame)
+                        pc.map_to(mapped_frame)
+
+                        # Pointcloud data to arrays
+                        v, t = points.get_vertices(), points.get_texture_coordinates()
+                        verts = np.asanyarray(v).view(np.float32).reshape(-1, 3)  # xyz
+                        texcoords = np.asanyarray(t).view(np.float32).reshape(-1, 2)  # uv
+                        
+                        # Render
+                        now = time.time()
+
+                        out.fill(0)
+
+                        self.grid(out, (0, 0.5, 1), size=1, n=10)
+                        self.frustum(out, depth_intrinsics)
+                        self.axes(out, self.view([0, 0, 0]), state.rotation, size=0.1, thickness=1)
+
+                        if not state.scale or out.shape[:2] == (h, w):
+                            self.pointcloud(out, verts, texcoords, color_source)
+                        else:
+                            tmp = np.zeros((h, w, 3), dtype=np.uint8)
+                            self.pointcloud(tmp, verts, texcoords, color_source)
+                            tmp = cv2.resize(
+                                tmp, out.shape[:2][::-1], interpolation=cv2.INTER_NEAREST)
+                            np.putmask(out, tmp > 0, tmp)
+
+                        if any(state.mouse_btns):
+                            self.axes(out, self.view(state.pivot), state.rotation, thickness=4)
+
+                        dt = time.time() - now
+
+                        cv2.setWindowTitle(
+                            state.WIN_NAME, "RealSense (%dx%d) %dFPS (%.2fms) %s" %
+                            (w, h, 1.0/dt, dt*1000, "PAUSED" if state.paused else ""))
+
+                        cv2.imshow(state.WIN_NAME, out)
+                        key = cv2.waitKey(1)
+                        _, D3_buf = cv2.imencode(".jpg", out)
+                        D3_encoded = base64.b64encode(D3_buf).decode("utf-8")
+
                     now_c = time.time()
                     if self.last_color_time != 0:
                         dt_c = now_c - self.last_color_time
@@ -482,62 +543,12 @@ class CameraManager:
                             self.displayed_depth_fps = 1.0 / avg_dt_d
                     self.last_depth_time = now_d
 
-                    # Convert frames to JPG+base64
-                    color_image = np.asanyarray(color_frame.get_data())
-                    depth_colorized = rs.colorizer().colorize(depth_frame)
-                    depth_image = np.asanyarray(depth_colorized.get_data())
-                    
-                    depth_colormap = np.asanyarray(
-                    colorizer.colorize(depth_frame).get_data())
-
-                    mapped_frame, color_source = depth_frame, depth_colormap
-
-
-                    points = pc.calculate(depth_frame)
-                    pc.map_to(mapped_frame)
-
-                    # Pointcloud data to arrays
-                    v, t = points.get_vertices(), points.get_texture_coordinates()
-                    verts = np.asanyarray(v).view(np.float32).reshape(-1, 3)  # xyz
-                    texcoords = np.asanyarray(t).view(np.float32).reshape(-1, 2)  # uv
-                    
-                    # Render
-                    now = time.time()
-
-                    out.fill(0)
-
-                    self.grid(out, (0, 0.5, 1), size=1, n=10)
-                    self.frustum(out, depth_intrinsics)
-                    self.axes(out, self.view([0, 0, 0]), state.rotation, size=0.1, thickness=1)
-
-                    if not state.scale or out.shape[:2] == (h, w):
-                        self.pointcloud(out, verts, texcoords, color_source)
-                    else:
-                        tmp = np.zeros((h, w, 3), dtype=np.uint8)
-                        self.pointcloud(tmp, verts, texcoords, color_source)
-                        tmp = cv2.resize(
-                            tmp, out.shape[:2][::-1], interpolation=cv2.INTER_NEAREST)
-                        np.putmask(out, tmp > 0, tmp)
-
-                    if any(state.mouse_btns):
-                        self.axes(out, self.view(state.pivot), state.rotation, thickness=4)
-
-                    dt = time.time() - now
-
-                    cv2.setWindowTitle(
-                        state.WIN_NAME, "RealSense (%dx%d) %dFPS (%.2fms) %s" %
-                        (w, h, 1.0/dt, dt*1000, "PAUSED" if state.paused else ""))
-
-                    cv2.imshow(state.WIN_NAME, out)
-                    key = cv2.waitKey(1)
-
                     _, color_buf = cv2.imencode(".jpg", color_image)
                     _, depth_buf = cv2.imencode(".jpg", depth_image)
-                    _, D3_buf = cv2.imencode(".jpg", out)
 
                     color_encoded = base64.b64encode(color_buf).decode("utf-8")
                     depth_encoded = base64.b64encode(depth_buf).decode("utf-8")
-                    D3_encoded = base64.b64encode(D3_buf).decode("utf-8")
+                    
 
                     # Gather metadata if toggled
                     lines_rgb = []

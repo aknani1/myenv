@@ -106,6 +106,11 @@ def init_routes(app):
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    @app.route('/api/set3D', methods=['POST'])
+    def set3D():
+        data = request.json
+        print("kokokokoko")
+        app.camera_manager.set3D(data.get("show3D"))
     #################### Socket.IO ####################
     @socketio.on('connect')
     def handle_connect():
